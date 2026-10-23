@@ -1,0 +1,58 @@
+[package]
+name = "tracker-win"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Windows adapters. Depends on tracker-api only, never on tracker (ADR-0004).
+[dependencies]
+tracker-api.workspace = true
+png.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# tracker-probe only, behind the `probe` feature.
+anyhow = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+# The tracker-probe CLI and the spike drivers it needs. The app never enables it:
+# `cargo run -p tracker-win --features probe --bin tracker-probe -- --help`
+probe = ["dep:anyhow", "dep:clap", "dep:serde_json", "dep:tracing-subscriber"]
+
+# Starting feature set for plan section 5; add or drop features as the adapters land.
+[dependencies.windows]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_Power",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_XboxController",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[[bin]]
+name = "tracker-probe"
+path = "src/bin/tracker-probe.rs"
+required-features = ["probe"]

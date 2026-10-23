@@ -1,0 +1,272 @@
+/* Design tokens from docs/design/reference.md, plus the Tailwind v4 theme built on them.
+   This is the app's single stylesheet entry. Raw tokens keep the reference's names; Tailwind
+   utilities map onto them, so a token change never needs a component change. */
+
+@import "tailwindcss";
+/* The opsz build carries the optical-size axis, so the hero number gets Inter's display cut. */
+@import "@fontsource-variable/inter/opsz.css";
+
+/* Shared tokens (both surfaces). */
+:root {
+  color-scheme: dark;
+
+  /* Hairlines do the separating, so fills can stay a calm ladder of near-blacks. */
+  --border: rgb(255 255 255 / 7%);
+  --border-strong: rgb(255 255 255 / 10%);
+  /* The reference's 20% ring measured under 2:1 on the dark surfaces; 50% clears 3:1 on every
+     surface and segment thumb, in both glass and solid. */
+  --border-focus: rgb(255 255 255 / 50%);
+
+  /* Text tiers, each a clear step apart. fg-3 stays at 4.5:1 or better on every solid surface up
+     to surface-3; fg-4 only marks what has no value yet (disabled, future days, the donut's
+     "more" slice). */
+  --fg-1: #f5f5f5;
+  --fg-2: #a8a8a8;
+  --fg-3: #888888;
+  --fg-4: #646464;
+
+  --productive: oklch(0.7 0.16 258);
+  --entertainment: oklch(0.6 0.04 75);
+  /* Ring, donut arcs and the top bar segment only; nothing else glows. */
+  --productive-glow: drop-shadow(0 0 12px oklch(0.7 0.16 258 / 35%));
+
+  /* Heatmap ramp relative to the Daily Goal: empty, <25%, <50%, <100%, goal met. */
+  --heat-0: #1c1c1c;
+  --heat-1: #112d55;
+  --heat-2: #1e4b8d;
+  --heat-3: #3370c7;
+  --heat-4: #5b9eff;
+
+  /* Inverted primary (at most once per screen) and ghost secondary. */
+  --button-primary-bg: #f5f5f5;
+  --button-primary-fg: #0a0a0a;
+  --button-ghost-hover: rgb(255 255 255 / 4%);
+
+  /* Windows' own caption Close hover: the one non-palette color, by OS convention. It also fills
+     the one destructive confirm, Delete all data's "Delete everything" (white text, 5.3:1). */
+  --close-hover: #c42b1c;
+  --danger: var(--close-hover);
+
+  --titlebar-height: 40px;
+  /* Dashboards (Day, History) fill the window's height up to this, then stop, so a tall window
+     gets canvas below finished cards instead of cards stretched into towers. */
+  --view-max-h: 760px;
+
+  /* CSS transition durations, zeroed below under reduced motion. JS-driven motion (thumbs, ring
+     fill, count-up, donut sweep, popovers) lives in lib/motion.ts and honors useReducedMotion. */
+  --dur-fast: 150ms; /* hover, color, border; with --ease-standard */
+  --dur-chart: 250ms; /* bar heights and the goal line when paging weeks; with --ease-drawer */
+}
+
+/* Glass: Acrylic is on behind the window. Cards are white-alpha fills with no backdrop-filter;
+   only popovers blur, because they sit over page content. */
+[data-surface="glass"] {
+  /* The same ladder as solid, as white steps over the tint: bg < rail < card < raised < selected. */
+  --bg: rgb(10 10 10 / 66%);
+  --rail-bg: rgb(255 255 255 / 2.5%);
+  --surface-1: rgb(255 255 255 / 4.5%);
+  --surface-2: rgb(255 255 255 / 7.5%);
+  --thumb: rgb(255 255 255 / 11%);
+  /* Popovers are the one dark, blurred layer: they sit over page content, not the desktop. */
+  --surface-3: rgb(24 24 24 / 82%);
+  --surface-3-backdrop: blur(24px) saturate(140%);
+  --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 6%);
+  /* An empty heatmap cell is one step up from its card; over glass that stays an alpha. */
+  --heat-0: rgb(255 255 255 / 5%);
+}
+
+/* Solid: Acrylic is off (window inactive, Transparency effects off, battery saver, or the Solid
+   appearance). A deliberate ladder of neutral near-blacks, each step visible on its own:
+   canvas < rail < card < raised (hover, tracks) < popover < selected. */
+[data-surface="solid"] {
+  --bg: #090909;
+  --rail-bg: #0e0e0e;
+  --surface-1: #141414;
+  --surface-2: #1b1b1b;
+  --surface-3: #202020;
+  --thumb: #272727; /* selected: segment thumbs and the rail's current view */
+  --surface-3-backdrop: none;
+  --glass-highlight: 0 0 #0000;
+}
+
+/* Each view's column: centered right of the rail, at most this wide, and the titlebar title lines
+   up with it (App sets data-view). Charts and tile grids use the room; the Day list stops where its
+   rows are still easy to scan across; Settings and first run are reading columns. */
+[data-view] {
+  --view-max: 1280px;
+}
+[data-view="day"] {
+  --view-max: 1160px;
+}
+[data-view="settings"] {
+  --view-max: 680px;
+}
+[data-view="first-run"] {
+  --view-max: 880px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-chart: 0ms;
+  }
+}
+
+/* Surface-dependent colors: `inline` so utilities read the live variable and follow data-surface.
+   Tailwind's default palette is cleared on purpose: color only comes from these tokens. */
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--bg);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-thumb: var(--thumb);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-border-focus: var(--border-focus);
+  --color-fg-1: var(--fg-1);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-fg-4: var(--fg-4);
+  --color-productive: var(--productive);
+  --color-entertainment: var(--entertainment);
+  --color-heat-0: var(--heat-0);
+  --color-heat-1: var(--heat-1);
+  --color-heat-2: var(--heat-2);
+  --color-heat-3: var(--heat-3);
+  --color-heat-4: var(--heat-4);
+  --color-button-primary: var(--button-primary-bg);
+  --color-button-primary-fg: var(--button-primary-fg);
+  --color-ghost-hover: var(--button-ghost-hover);
+  --color-rail: var(--rail-bg);
+  --color-close-hover: var(--close-hover);
+  --color-danger: var(--danger);
+
+  --shadow-glass: var(--glass-highlight);
+}
+
+/* Static scales. `static` emits every variable even when unused, so plain CSS can rely on
+   --radius-*, --ease-*, --text-* and --font-sans too. Defaults are cleared to keep one scale. */
+@theme static {
+  /* The 4px grid in px, not rem: html sets a 14px body size, which would otherwise shrink every
+     spacing utility by 14/16 (a 72px rail came out 63px). */
+  --spacing: 4px;
+
+  --font-sans: "Inter Variable", "Segoe UI", system-ui, sans-serif;
+
+  /* The one layout breakpoint, a container query on the view column (`@max-narrow:`): below it
+     (a window under about 900px, e.g. snapped to half a laptop screen) the Day view stacks. */
+  --container-narrow: 780px;
+
+  --radius-*: initial;
+  --radius-control: 8px; /* buttons, inputs, segment thumb */
+  --radius-segment: 10px; /* segmented-control track */
+  --radius-card: 12px;
+  --radius-pill: 9999px; /* Productive/Entertainment switch track only */
+
+  /* The only in-window shadow. */
+  --shadow-popover: 0 12px 28px -18px rgb(0 0 0 / 75%);
+
+  --ease-*: initial;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* CSS stand-in for the no-overshoot spring, for the tile check badge. */
+  --ease-spring: cubic-bezier(0.2, 0.9, 0.25, 1);
+
+  /* Type scale: size / line-height / weight / tracking. Only 400, 500 and 600 are used. */
+  --text-*: initial;
+  /* A cap: GoalRing sizes the number at 19% of the ring, 52px at the default window size. */
+  --text-hero: 72px;
+  --text-hero--line-height: 1;
+  --text-hero--font-weight: 500;
+  --text-hero--letter-spacing: -0.025em;
+  --text-stat: 28px;
+  --text-stat--line-height: 1.1;
+  --text-stat--font-weight: 500;
+  --text-stat--letter-spacing: -0.02em;
+  /* First-run step headings. */
+  --text-heading: 26px;
+  --text-heading--line-height: 1.15;
+  --text-heading--font-weight: 500;
+  --text-heading--letter-spacing: -0.02em;
+  --text-title: 16px;
+  --text-title--line-height: 1.4;
+  --text-title--font-weight: 600;
+  --text-title--letter-spacing: -0.01em;
+  --text-body: 14px;
+  --text-body--line-height: 1.45;
+  --text-meta: 12px;
+  --text-meta--line-height: 1.35;
+  --text-micro: 11px;
+  --text-micro--line-height: 1.3;
+  --text-micro--letter-spacing: 0.01em;
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--fg-1);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: -2px;
+  }
+
+  /* A desktop window, not a page: the views own their scrolling and chrome text isn't selectable. */
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    cursor: default;
+    user-select: none;
+  }
+  input {
+    user-select: text;
+  }
+
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 4px solid transparent;
+    border-radius: 9999px;
+    background: rgb(255 255 255 / 10%) padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(255 255 255 / 18%);
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  input[type="search"]::-webkit-search-cancel-button {
+    display: none;
+  }
+}
+
+/* Set for two frames while data-surface flips (lib/surface.ts), like T3's .no-transitions. */
+[data-switching] *,
+[data-switching] *::before,
+[data-switching] *::after {
+  /* biome-ignore lint/complexity/noImportantStyles: must beat every utility's transition for two frames. */
+  transition: none !important;
+}
+
+/* Mock mode only (src/dev/mockIpc.ts): a pre-blurred stand-in wallpaper under the --bg tint, so
+   browser screenshots show roughly what Acrylic looks like. Solid's opaque --bg hides it. */
+html[data-wallpaper] {
+  background:
+    linear-gradient(var(--bg), var(--bg)),
+    radial-gradient(60% 70% at 78% 18%, #3b4f8f 0%, transparent 70%),
+    radial-gradient(55% 60% at 12% 85%, #5a3d6e 0%, transparent 70%),
+    radial-gradient(40% 45% at 45% 55%, #23476b 0%, transparent 75%), #141a2b;
+}

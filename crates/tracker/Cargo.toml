@@ -1,0 +1,15 @@
+[package]
+name = "tracker"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Platform-free core: never depends on tracker-win (ADR-0004).
+[dependencies]
+tracker-api.workspace = true
+rusqlite.workspace = true
+jiff.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true

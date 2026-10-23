@@ -1,0 +1,30 @@
+[package]
+name = "productivity-tracker"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+default-run = "productivity-tracker"
+
+# Distinct lib name: a lib and bin sharing a name collide on Windows build outputs.
+[lib]
+name = "productivity_tracker_lib"
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+tracker-api.workspace = true
+tracker.workspace = true
+tracker-win.workspace = true
+tauri.workspace = true
+tauri-specta.workspace = true
+specta = { workspace = true, features = ["function"] }
+specta-typescript.workspace = true
+tauri-plugin-single-instance.workspace = true
+tauri-plugin-autostart.workspace = true
+tauri-plugin-dialog.workspace = true
+jiff.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+windows-registry.workspace = true

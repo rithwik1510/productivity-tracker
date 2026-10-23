@@ -1,0 +1,27 @@
+# Rust (the workspace target lives at the root)
+/target
+/src-tauri/target
+/src-tauri/gen/schemas
+
+# Frontend
+/node_modules
+/dist
+/test-results
+/playwright-report
+/blob-report
+*.tsbuildinfo
+
+# Working notes and issues. They hold machine-specific details (installed apps, paths, PIDs)
+# and must never be published.
+/.scratch/
+
+# Local data, logs and secrets. The app keeps its real data under %LOCALAPPDATA%, never here.
+*.db
+*.db-wal
+*.db-shm
+*.log
+.env
+.env.*
+
+# Screenshots the e2e specs regenerate on every run (README images live in docs/screenshots)
+/e2e/screenshots/

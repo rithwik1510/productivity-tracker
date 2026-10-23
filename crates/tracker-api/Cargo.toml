@@ -1,0 +1,11 @@
+[package]
+name = "tracker-api"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+specta.workspace = true
+url.workspace = true
+thiserror.workspace = true
