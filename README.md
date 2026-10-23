@@ -50,7 +50,7 @@ Changing an app's category changes future time only. Past days keep the category
 
 Windows 10 or 11, 64-bit.
 
-1. Download the installer from the Releases page.
+1. Download `ProductivityTracker_0.1.0_x64-setup.exe` from the [latest release](https://github.com/rithwik1510/productivity-tracker/releases/latest).
 2. Run it. It installs for your user only and doesn't need admin rights.
 3. The installer isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**. Signed builds are planned.
 
