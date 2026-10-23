@@ -22,6 +22,8 @@
 *.log
 .env
 .env.*
+# The updater's private signing key lives outside the repo (scripts/release.mjs); never commit one.
+*.key
 
 # Screenshots the e2e specs regenerate on every run (README images live in docs/screenshots)
 /e2e/screenshots/

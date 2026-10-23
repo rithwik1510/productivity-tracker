@@ -35,6 +35,7 @@ struct ExportSettings {
     away_after_minutes: u32,
     waiting_credit: bool,
     appearance: Appearance,
+    auto_update: bool,
 }
 
 #[derive(Serialize)]
@@ -160,6 +161,7 @@ impl Reader {
                 away_after_minutes: settings.away_after_minutes,
                 waiting_credit: settings.waiting_credit,
                 appearance: settings.appearance,
+                auto_update: settings.auto_update,
             },
             apps,
             sites: self.sites()?,

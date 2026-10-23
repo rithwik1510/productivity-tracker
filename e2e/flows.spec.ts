@@ -463,13 +463,91 @@ test("Settings: export asks the backend for each format; About shows the version
   await expect(data.getByRole("alert")).toHaveCount(0);
 
   const about = page.getByRole("region", { name: "About" });
-  await expect(about).toContainText("0.1.1");
+  await expect(about).toContainText("0.1.2");
   await expect(about).toContainText("MIT License");
 
   await open(page, "?fail=export_data");
   await openSettings(page);
   await data.getByRole("button", { name: "Export CSV" }).click();
   await expect(data.getByRole("alert")).toContainText("Mock failure for export_data.");
+});
+
+test("About: Check for updates says what it found", async ({ page }) => {
+  const about = page.getByRole("region", { name: "About" });
+  const check = about.getByRole("button", { name: "Check for updates" });
+  const line = about.getByRole("status");
+
+  await open(page);
+  await openSettings(page);
+  await check.click();
+  await expect(line).toHaveText("Up to date");
+
+  await open(page, "?slow=check_for_updates");
+  await openSettings(page);
+  await check.click();
+  await expect(line).toHaveText("Checking…");
+  await expect(check).toBeDisabled();
+
+  await open(page, "?fail=check_for_updates");
+  await openSettings(page);
+  await check.click();
+  await expect(line).toHaveText("Couldn't check (offline?)");
+  await expect(check).toBeEnabled();
+
+  // A newer version is downloaded by the check, and then waits for Restart, here and on the Day view.
+  await open(page, "?update=available");
+  await openSettings(page);
+  await check.click();
+  await expect(line).toHaveText("Update ready · v0.1.3");
+  await expect(about.getByRole("button", { name: "Restart to update" })).toBeVisible();
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(page.getByText("Update ready · v0.1.3")).toBeVisible();
+});
+
+test("a downloaded update waits quietly on the Day view until Restart", async ({ page }) => {
+  await open(page);
+  await expect(page.getByText(/^Update ready/)).toHaveCount(0);
+
+  await open(page, "?update=ready");
+  const titlebar = page.locator("header");
+  await expect(titlebar.getByText("Update ready · v0.1.3")).toBeVisible();
+  // It stays while paging through Days, and Settings starts from it too.
+  await page.getByRole("button", { name: "Previous day" }).click();
+  await expect(titlebar.getByText("Update ready · v0.1.3")).toBeVisible();
+  await openSettings(page);
+  await expect(page.getByRole("region", { name: "About" }).getByRole("status")).toHaveText(
+    "Update ready · v0.1.3",
+  );
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+
+  // Restart hands over to the installer: the app exits, taking the window with it.
+  await titlebar.getByRole("button", { name: "Restart to update" }).click();
+  await expect(page.locator("main")).toHaveCount(0);
+
+  await open(page, "?update=ready&fail=restart_to_update");
+  await page.getByRole("button", { name: "Restart to update" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Couldn't install the update");
+});
+
+test("'Check for updates automatically' is on by default and saves", async ({ page }) => {
+  await open(page);
+  await openSettings(page);
+  const auto = page.getByRole("switch", { name: "Check for updates automatically" });
+  await expect(auto).toBeChecked();
+  await auto.click();
+  await expect(auto).not.toBeChecked();
+  // From the backend, not just the cache.
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await openSettings(page);
+  await expect(auto).not.toBeChecked();
+
+  await open(page, "?fail=set_auto_update");
+  await openSettings(page);
+  await auto.click();
+  await expect(page.getByRole("region", { name: "About" }).getByRole("alert")).toContainText(
+    "Couldn't save that.",
+  );
+  await expect(auto).toBeChecked();
 });
 
 test("Delete all data: cancel keeps everything, confirm starts over at first run", async ({

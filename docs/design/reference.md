@@ -21,6 +21,8 @@ T3 Code and Grok both read as premium for the same reason: they hold back. Both 
 
 **Watch switch amendment (2026-10-23, issue 18):** the app popover in Apps & sites gains a row under the category control for a Productive app that isn't a browser: "Counts while I watch" in 12/500 `--fg-1` over a `--fg-3` meta description, with the Settings `Switch` to the right. It adds no divider or new token, and picking it doesn't close the popover. The status line's Tracking state can end in " · watching", like " · waiting".
 
+**Update amendment (2026-10-23, issue 19):** once an update is downloaded, the Day view's titlebar carries a quiet prompt at the column's right edge (the titlebar's `aside`, before the caption buttons' 144 px): "Update ready · v0.1.3" in 12 px `--fg-3` meta with the version in `--fg-2`, then a "Restart" titlebar ghost button. No dot, no color, no motion: it is chrome, not data, and it never interrupts. Settings → About gains an Updates row (its line says the check's state; its secondary button is "Check for updates", or "Restart" while one is ready) and a "Check for updates automatically" switch row.
+
 ## 1. What we're borrowing
 
 - A dark, neutral tint over the Acrylic backdrop, never a colored tint. T3's dark comment still guides us: "Borders and hover states provide separation without milky gray fills."

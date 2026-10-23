@@ -8,6 +8,8 @@
 //   ?watching=1           get_status reports its app as counting only by its watch (ADR-0008)
 //   ?status=saveFailed|away|awayBrief|untracked  get_status reports that state instead of
 //                         tracking (a pause still wins over all but saveFailed, as in the backend)
+//   ?update=ready         an update (0.1.3) was already downloaded in the background (ADR-0009)
+//   ?update=available     Check for updates finds 0.1.3 and downloads it; otherwise it's up to date
 //   ?fail=<command>       makes that command throw, to exercise optimistic rollbacks
 //   ?slow=<command>       makes that command never answer, to hold a loading state for a screenshot
 import { emit } from "@tauri-apps/api/event";
@@ -349,7 +351,10 @@ const settings: Settings = {
   awayAfterMinutes: 5,
   // Off on a new install; an onboarded fixture stands for an install that had it on.
   waitingCredit: fixture.onboarded,
+  autoUpdate: true,
 };
+/** The update downloaded and waiting for a restart, as get_update reports it. */
+let updateReady: string | null = params.get("update") === "ready" ? "0.1.3" : null;
 /** When the tray's pause ends, as get_pause formats it; null when not paused. */
 let pausedUntil: string | null = params.get("paused") ? "3:40 PM" : null;
 /** Set by delete_all_data: no history is left on any Day. */
@@ -662,6 +667,7 @@ function deleteAllData() {
     appearance: "glass",
     awayAfterMinutes: 5,
     waitingCredit: false,
+    autoUpdate: true,
   } satisfies Settings);
   return null;
 }
@@ -750,6 +756,18 @@ async function handle(cmd: string, a: Args): Promise<unknown> {
     case "set_waiting_credit":
       settings.waitingCredit = a.enabled === true;
       return null;
+    case "set_auto_update":
+      settings.autoUpdate = a.enabled === true;
+      return null;
+    case "get_update":
+      return updateReady satisfies string | null;
+    case "check_for_updates":
+      if (params.get("update") === "available") updateReady = "0.1.3";
+      return updateReady satisfies string | null;
+    case "restart_to_update":
+      // The app flushes and exits for the installer, taking the window with it.
+      document.body.replaceChildren();
+      return null;
     case "get_pause":
       return pausedUntil satisfies string | null;
     case "resume_tracking":
@@ -766,7 +784,7 @@ async function handle(cmd: string, a: Args): Promise<unknown> {
     case "delete_all_data":
       return deleteAllData();
     case "plugin:app|version":
-      return "0.1.1";
+      return "0.1.2";
     case "plugin:window|destroy":
       // The real window is gone; leave an empty canvas.
       document.body.replaceChildren();

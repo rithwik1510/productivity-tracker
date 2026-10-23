@@ -1,7 +1,8 @@
 //! The tray icon: the app's only presence while the window is closed (plan section 6). It also
-//! owns Pause, which lives only here and in the Day view's live line.
+//! owns Pause, which lives only here and in the Day view's live line, and offers "Restart to
+//! update" while an update is ready (ADR-0009).
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -15,7 +16,7 @@ use tracker::days::next_day_start;
 use tracker_api::{ApiError, Control, TrackerStatus};
 
 use crate::state::AppState;
-use crate::{glass, window};
+use crate::{glass, update, window};
 
 const TRAY: &str = "main";
 const OPEN: &str = "open";
@@ -23,14 +24,35 @@ const PAUSE_15_MIN: &str = "pause-15-min";
 const PAUSE_1_HOUR: &str = "pause-1-hour";
 const PAUSE_UNTIL_TOMORROW: &str = "pause-until-tomorrow";
 const RESUME: &str = "resume";
+const RESTART_TO_UPDATE: &str = "restart-to-update";
 const QUIT: &str = "quit";
 const TOOLTIP_REFRESH: Duration = Duration::from_secs(60);
 /// Emitted after every pause or resume, so the Day view swaps its live line at once.
 const PAUSE_CHANGED: &str = "pause-changed";
 
-/// Whether the menu on the tray has Resume, so it is rebuilt only when that changes: replacing it
-/// on every refresh would disturb a menu the user has open.
-static MENU_PAUSED: AtomicBool = AtomicBool::new(false);
+/// Which optional items the menu on the tray has, as `MenuItems::key`, so it is rebuilt only when
+/// that changes: replacing it on every refresh would disturb a menu the user has open.
+static MENU_SHOWN: AtomicU8 = AtomicU8::new(0);
+
+/// The menu's optional items: Resume while paused, "Restart to update" while an update is ready.
+#[derive(Clone, Copy)]
+struct MenuItems {
+    resume: bool,
+    restart_to_update: bool,
+}
+
+impl MenuItems {
+    fn now(app: &AppHandle, paused: bool) -> Self {
+        Self {
+            resume: paused,
+            restart_to_update: update::ready_version(app).is_some(),
+        }
+    }
+
+    fn key(self) -> u8 {
+        u8::from(self.resume) | u8::from(self.restart_to_update) << 1
+    }
+}
 
 /// The mono mark at Windows' small-icon size for 100, 125, 150 and 200 % scale, drawn per size by
 /// `bun run icons` so Windows never has to scale it. White for a dark taskbar, black for a light one.
@@ -53,13 +75,14 @@ static ICON_SHOWN: AtomicUsize = AtomicUsize::new(usize::MAX);
 /// Needs `AppState` managed: the tooltip and menu read through its shared reader.
 pub fn build(app: &App) -> tauri::Result<()> {
     let paused = paused_until(&app.state());
-    MENU_PAUSED.store(paused.is_some(), Ordering::Relaxed);
+    let items = MenuItems::now(app.handle(), paused.is_some());
+    MENU_SHOWN.store(items.key(), Ordering::Relaxed);
     let key = icon_key(app.handle());
     ICON_SHOWN.store(key, Ordering::Relaxed);
     TrayIconBuilder::with_id(TRAY)
         .icon(icon(key))
         .tooltip(tooltip(&app.state(), paused))
-        .menu(&menu(app.handle(), paused.is_some())?)
+        .menu(&menu(app.handle(), items)?)
         // Left-click opens the window; the menu is on right-click.
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -71,6 +94,7 @@ pub fn build(app: &App) -> tauri::Result<()> {
                 next_day_start(now, &TimeZone::system()).map(Some)
             }),
             RESUME => pause(app, |_| Ok(None)),
+            RESTART_TO_UPDATE => restart_to_update(app),
             QUIT => quit_app(app),
             _ => {}
         })
@@ -180,8 +204,8 @@ fn icon(key: usize) -> Image<'static> {
     set[key % ICON_SIZES.len()].clone()
 }
 
-/// Re-reads today's total and the pause into the tooltip, rebuilds the menu when Resume has to
-/// appear or go, and re-checks the icon.
+/// Re-reads today's total and the pause into the tooltip, rebuilds the menu when Resume or
+/// "Restart to update" has to appear or go, and re-checks the icon.
 pub fn refresh(app: &AppHandle) {
     update_icon(app);
     let Some(tray) = app.tray_by_id(TRAY) else {
@@ -190,16 +214,18 @@ pub fn refresh(app: &AppHandle) {
     let state = app.state::<AppState>();
     let paused = paused_until(&state);
     let mut result = tray.set_tooltip(Some(tooltip(&state, paused)));
-    if MENU_PAUSED.swap(paused.is_some(), Ordering::Relaxed) != paused.is_some() {
-        result = result.and(menu(app, paused.is_some()).and_then(|menu| tray.set_menu(Some(menu))));
+    let items = MenuItems::now(app, paused.is_some());
+    if MENU_SHOWN.swap(items.key(), Ordering::Relaxed) != items.key() {
+        result = result.and(menu(app, items).and_then(|menu| tray.set_menu(Some(menu))));
     }
     if let Err(e) = result {
         tracing::warn!("couldn't update the tray: {e}");
     }
 }
 
-/// Open · Pause ▸ (15 minutes · 1 hour · Until tomorrow) · Resume (only while paused) · Quit.
-fn menu(app: &AppHandle, paused: bool) -> tauri::Result<Menu<Wry>> {
+/// Open · Pause ▸ (15 minutes · 1 hour · Until tomorrow) · Resume (only while paused) · Restart to
+/// update (only while an update is ready) · Quit.
+fn menu(app: &AppHandle, items: MenuItems) -> tauri::Result<Menu<Wry>> {
     let open = MenuItem::with_id(app, OPEN, "Open", true, None::<&str>)?;
     let pause = Submenu::with_items(
         app,
@@ -217,13 +243,27 @@ fn menu(app: &AppHandle, paused: bool) -> tauri::Result<Menu<Wry>> {
             )?,
         ],
     )?;
-    let quit = MenuItem::with_id(app, QUIT, "Quit", true, None::<&str>)?;
-    if paused {
-        let resume = MenuItem::with_id(app, RESUME, "Resume", true, None::<&str>)?;
-        Menu::with_items(app, &[&open, &pause, &resume, &quit])
-    } else {
-        Menu::with_items(app, &[&open, &pause, &quit])
+    let menu = Menu::with_items(app, &[&open, &pause])?;
+    if items.resume {
+        menu.append(&MenuItem::with_id(
+            app,
+            RESUME,
+            "Resume",
+            true,
+            None::<&str>,
+        )?)?;
     }
+    if items.restart_to_update {
+        menu.append(&MenuItem::with_id(
+            app,
+            RESTART_TO_UPDATE,
+            "Restart to update",
+            true,
+            None::<&str>,
+        )?)?;
+    }
+    menu.append(&MenuItem::with_id(app, QUIT, "Quit", true, None::<&str>)?)?;
+    Ok(menu)
 }
 
 /// When the current pause ends, if paused. A failed read counts as not paused.
@@ -274,6 +314,26 @@ fn tooltip(state: &AppState, paused_until: Option<i64>) -> String {
         format!("Can't save, retrying\n{today}")
     } else {
         today
+    }
+}
+
+/// Off the main thread: the tracker's flush waits up to 3 s, and the installer starts after it.
+fn restart_to_update(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = update::restart(&app) {
+            tracing::warn!("couldn't restart to update: {e}");
+        }
+    });
+}
+
+/// Takes the icon off the tray before the process exits without Tauri's clean-up (the update's
+/// installer), so no dead icon lingers until the pointer passes over it.
+pub fn hide(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id(TRAY)
+        && let Err(e) = tray.set_visible(false)
+    {
+        tracing::warn!("couldn't hide the tray icon: {e}");
     }
 }
 

@@ -2,15 +2,19 @@ import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Appearance } from "../api/bindings";
 import {
+  useCheckForUpdates,
   useDeleteAllData,
   useExport,
   useOpenDataFolder,
+  useRestartToUpdate,
   useSetAppearance,
+  useSetAutoUpdate,
   useSetAwayAfter,
   useSetDailyGoal,
   useSetLaunchAtLogin,
   useSettings,
   useSetWaitingCredit,
+  useUpdate,
   useVersion,
 } from "../api/queries";
 import { DANGER, SECONDARY } from "../components/buttons";
@@ -65,7 +69,7 @@ function SettingRow({
   children,
 }: {
   title: string;
-  description?: string;
+  description?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -92,13 +96,20 @@ export function SettingsView() {
   const setWaitingCredit = useSetWaitingCredit();
   const setAppearance = useSetAppearance();
   const setLaunch = useSetLaunchAtLogin();
+  const setAutoUpdate = useSetAutoUpdate();
   const exporter = useExport();
   const openFolder = useOpenDataFolder();
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (!settings.data) return settings.error ? <QuietError error={settings.error} /> : null;
-  const { dailyGoalMinutes, awayAfterMinutes, waitingCredit, appearance, launchAtLogin } =
-    settings.data;
+  const {
+    dailyGoalMinutes,
+    awayAfterMinutes,
+    waitingCredit,
+    appearance,
+    launchAtLogin,
+    autoUpdate,
+  } = settings.data;
 
   return (
     <div className="flex flex-col gap-6 pb-2">
@@ -236,9 +247,20 @@ export function SettingsView() {
         </SettingRow>
       </Section>
 
-      <Section title="About">
+      <Section title="About" error={saveFailed(setAutoUpdate.error)}>
         <SettingRow title="Version">
           <span className="text-fg-2 tabular-nums">{version}</span>
+        </SettingRow>
+        <UpdateRow />
+        <SettingRow
+          title="Check for updates automatically"
+          description="A few seconds after the app starts, then every 6 hours. It only asks GitHub for the latest version."
+        >
+          <Switch
+            label="Check for updates automatically"
+            checked={autoUpdate}
+            onChange={(on) => setAutoUpdate.mutate(on)}
+          />
         </SettingRow>
         <SettingRow title="License">
           <span className="text-fg-2">MIT License</span>
@@ -249,6 +271,60 @@ export function SettingsView() {
         {confirmDelete && <DeleteAllDialog onClose={() => setConfirmDelete(false)} />}
       </AnimatePresence>
     </div>
+  );
+}
+
+/**
+ * "Check for updates" (ADR-0009), saying what it found: Checking…, Up to date, Update ready, or
+ * Couldn't check. An update already downloaded in the background shows as ready from the start.
+ */
+function UpdateRow() {
+  const ready = useUpdate().data;
+  const check = useCheckForUpdates();
+  const restart = useRestartToUpdate();
+  const line = ready ? (
+    <>
+      Update ready · <span className="text-fg-1">v{ready}</span>
+    </>
+  ) : check.isPending ? (
+    "Checking…"
+  ) : check.isError ? (
+    "Couldn't check (offline?)"
+  ) : check.isSuccess ? (
+    "Up to date"
+  ) : (
+    "New versions come from the project's GitHub releases."
+  );
+  return (
+    <SettingRow
+      title="Updates"
+      description={
+        <span role="status" title={check.error?.message ?? restart.error?.message}>
+          {restart.error ? "Couldn't install the update" : line}
+        </span>
+      }
+    >
+      {ready ? (
+        <button
+          type="button"
+          aria-label="Restart to update"
+          className={SECONDARY}
+          disabled={restart.isPending}
+          onClick={() => restart.mutate()}
+        >
+          Restart
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={SECONDARY}
+          disabled={check.isPending}
+          onClick={() => check.mutate()}
+        >
+          Check for updates
+        </button>
+      )}
+    </SettingRow>
   );
 }
 

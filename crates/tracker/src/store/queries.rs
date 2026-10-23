@@ -201,7 +201,8 @@ impl Reader {
     /// autostart plugin.
     pub fn settings(&self) -> Result<Settings, StoreError> {
         let settings = self.conn.query_row(
-            "SELECT daily_goal_minutes, onboarded, appearance, away_after_minutes, waiting_credit
+            "SELECT daily_goal_minutes, onboarded, appearance, away_after_minutes, waiting_credit,
+                    auto_update
              FROM settings WHERE id = 1",
             [],
             |row| {
@@ -213,6 +214,7 @@ impl Reader {
                     appearance,
                     away_after_minutes: row.get(3)?,
                     waiting_credit: row.get(4)?,
+                    auto_update: row.get(5)?,
                 })
             },
         )?;

@@ -1,7 +1,7 @@
 {
   "name": "productivity-tracker",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "check": "biome check .",
     "bindings": "cargo run -p productivity-tracker --bin export-bindings",
     "icons": "bun scripts/icons.mjs",
+    "release": "bun scripts/release.mjs",
     "e2e": "playwright test",
     "tauri": "tauri"
   },

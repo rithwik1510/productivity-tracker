@@ -142,6 +142,9 @@ impl Tracker {
                     .and_then(|()| self.reload_rules());
                 let _ = reply.send(result.map_err(ApiError::from));
             }
+            Control::SetAutoUpdate { enabled, reply } => {
+                let _ = reply.send(self.writer.set_auto_update(enabled).map_err(ApiError::from));
+            }
             Control::SetPause { until_ms, reply } => {
                 let _ = reply.send(self.set_pause(until_ms).map_err(ApiError::from));
             }

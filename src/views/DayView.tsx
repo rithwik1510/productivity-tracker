@@ -1,6 +1,13 @@
 import { useEffect } from "react";
 import type { Category, DayItem, DaySummary, TrackerStatus } from "../api/bindings";
-import { useDay, usePause, useResume, useStatus } from "../api/queries";
+import {
+  useDay,
+  usePause,
+  useRestartToUpdate,
+  useResume,
+  useStatus,
+  useUpdate,
+} from "../api/queries";
 import { AppIcon } from "../components/AppIcon";
 import { AppRow } from "../components/AppRow";
 import { PRIMARY, TITLEBAR_GHOST, TITLEBAR_ICON } from "../components/buttons";
@@ -44,6 +51,7 @@ export function DayView() {
       <WindowTitle
         title={isToday ? "Today" : formatLongDay(totals.day)}
         meta={isToday ? formatLongDay(totals.day) : totals.day.slice(0, 4)}
+        aside={<UpdatePrompt />}
       >
         {!isToday && (
           <button
@@ -123,6 +131,40 @@ export function DayView() {
         </GlassCard>
       </div>
     </div>
+  );
+}
+
+/**
+ * The quiet prompt at the titlebar's right once an update is downloaded (ADR-0009): it never
+ * interrupts, and nothing restarts until it is pressed. A failed install drops the update, so the
+ * failure is said in its place.
+ */
+function UpdatePrompt() {
+  const version = useUpdate().data;
+  const restart = useRestartToUpdate();
+  if (restart.error) {
+    return (
+      <span role="alert" title={restart.error.message} className="text-meta text-fg-1">
+        Couldn't install the update
+      </span>
+    );
+  }
+  if (!version) return null;
+  return (
+    <>
+      <span className="text-meta whitespace-nowrap text-fg-3">
+        Update ready · <span className="text-fg-2">v{version}</span>
+      </span>
+      <button
+        type="button"
+        aria-label="Restart to update"
+        className={TITLEBAR_GHOST}
+        disabled={restart.isPending}
+        onClick={() => restart.mutate()}
+      >
+        Restart
+      </button>
+    </>
   );
 }
 

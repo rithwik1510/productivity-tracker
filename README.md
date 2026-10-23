@@ -4,11 +4,12 @@ LICENSE, productName and identifier in src-tauri/tauri.conf.json, APP_DIR_NAME i
 crates/tracker-api/src/lib.rs (the data folder; changing it orphans existing data), index.html,
 src/components/{TitleBar,Rail}.tsx, the startup error dialog in src-tauri/src/lib.rs, the export
 file name in src-tauri/src/commands.rs, and the <title> of the logo SVGs in src-tauri/icons/source
-(then `bun run icons`). -->
+(then `bun run icons`). Renaming the GitHub repo also moves the updater's endpoint in
+tauri.conf.json and REPO in scripts/release.mjs. -->
 
 # <img src="docs/logo.svg" width="36" height="36" alt="" align="top"> Productivity Tracker
 
-An automatic time tracker for Windows that only counts what you opt in to. You pick which apps and sites are Productive and which are Entertainment. Nothing else is tracked, and nothing leaves your PC.
+An automatic time tracker for Windows that only counts what you opt in to. You pick which apps and sites are Productive and which are Entertainment. Nothing else is tracked, and your data never leaves your PC.
 
 No timers to start, no account, no cloud. It sits in the tray, starts at login, and shows how much real work you did today, this week and this year.
 
@@ -60,9 +61,15 @@ The app uses Microsoft Edge WebView2 to draw its window. Windows 11 ships with i
 
 On first run you tap the apps you work in, then the ones that are for fun, then set a daily goal. After that, closing the window keeps tracking in the tray. Open it again from the tray icon.
 
+### Updates
+
+From v0.1.2 on, the app updates itself from this repository's GitHub releases. It checks a few seconds after it starts and every 6 hours while it runs, and downloads a new version in the background. Nothing restarts on its own: the Day view says "Update ready · v0.1.3 · Restart", and the tray menu has "Restart to update". Restarting saves the time counted so far, runs the installer with a progress bar and no questions, and opens the app again on the new version. Each update's installer is signed, and the app refuses one whose signature doesn't match.
+
+Settings → About has "Check for updates" and the "Check for updates automatically" switch. To upgrade from v0.1.0 or v0.1.1, install v0.1.2 or later by hand once, over the old version. Your data stays.
+
 ## Privacy
 
-Everything stays on your PC. There's no account, no telemetry, no crash reporting and no updater.
+Everything stays on your PC. There's no account, no telemetry and no crash reporting. The only thing the app asks the internet for is updates (see Network).
 
 ### What it reads while running
 
@@ -97,7 +104,11 @@ All of it lives in `%LOCALAPPDATA%\ProductivityTracker`:
 
 ### Network
 
-The app makes no network connections. The Rust side has no networking code. The window's Content Security Policy only allows the app's own local files and its IPC channel (`connect-src ipc:`), so the page can't reach the internet either. WebView2 itself is Microsoft's runtime, which Windows installs and updates.
+The update check is the app's only network request. A few seconds after start and every 6 hours, it makes a normal HTTPS request to GitHub for `latest.json`, the small file that names the newest release. When that is newer than the installed version, it downloads the installer from GitHub too. Nothing about your usage, apps, sites or settings is sent. Like any web request, GitHub sees your IP address and the updater's user agent.
+
+To turn it off, switch off Settings → About → "Check for updates automatically". The app then makes no network requests at all, unless you press "Check for updates".
+
+The update check runs in the Rust side, which has no other networking code. The window's Content Security Policy only allows the app's own local files and its IPC channel (`connect-src ipc:`), so the page can't reach the internet. WebView2 itself is Microsoft's runtime, which Windows installs and updates.
 
 Exports only go where you save them. Settings → Delete all data erases your history, tracked apps and sites, settings and icons, and returns the app to first run. It leaves `logs\` and `webview\` in place.
 
@@ -177,6 +188,8 @@ cargo test -p tracker                           # tracking scenarios
 bun run bindings                                # regenerate TypeScript bindings after changing commands
 bun run icons                                   # regenerate every app and tray icon from src-tauri/icons/source
 ```
+
+`bun run release` builds a signed installer and its `latest.json` for the auto-updater. It needs the updater's private key, which only the maintainer has. A build from source uses `bun run tauri build` instead; once installed, it checks GitHub for the official releases like any other copy.
 
 The code is a thin Tauri v2 shell in `src-tauri/` around three Rust crates:
 

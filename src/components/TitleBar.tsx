@@ -74,16 +74,19 @@ export const TitleSlotContext = createContext<HTMLElement | null>(null);
 
 /**
  * A view's title, rendered into the titlebar (as Windows 11's own apps do), which saves a row in
- * the 680px window. `children` are controls beside it, like the Day pager.
+ * the 680px window. `children` are controls beside it, like the Day pager; `aside` sits at the
+ * column's right edge, like the Day view's update prompt.
  */
 export function WindowTitle({
   title,
   meta,
   children,
+  aside,
 }: {
   title: string;
   meta?: string;
   children?: ReactNode;
+  aside?: ReactNode;
 }) {
   const slot = useContext(TitleSlotContext);
   if (!slot) return null;
@@ -92,6 +95,7 @@ export function WindowTitle({
       <h1 className="text-title whitespace-nowrap">{title}</h1>
       {meta && <span className="truncate text-meta text-fg-3">{meta}</span>}
       {children && <div className="ml-1 flex shrink-0 items-center gap-0.5">{children}</div>}
+      {aside && <div className="ml-auto flex shrink-0 items-center gap-1">{aside}</div>}
     </>,
     slot,
   );
@@ -119,7 +123,7 @@ export function TitleBar({ slotRef, brand }: { slotRef: Ref<HTMLDivElement>; bra
           </span>
         )}
         {/* Stops short of the 138px of caption buttons even when the column reaches them. */}
-        <div ref={slotRef} className="flex min-w-0 items-center gap-3 pr-36" />
+        <div ref={slotRef} className="flex min-w-0 flex-1 items-center gap-3 pr-36" />
       </div>
       <div className="absolute inset-y-0 right-0 flex">
         <CaptionButton

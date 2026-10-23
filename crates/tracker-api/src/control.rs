@@ -47,6 +47,12 @@ pub enum Control {
         enabled: bool,
         reply: Sender<Result<(), ApiError>>,
     },
+    /// "Check for updates automatically" (ADR-0009). Only stored: the shell's update loop reads it
+    /// before each check.
+    SetAutoUpdate {
+        enabled: bool,
+        reply: Sender<Result<(), ApiError>>,
+    },
     /// Pauses tracking until `until_ms` (UTC epoch ms), ending the current stretch as a shutdown
     /// would; `None` resumes. Stored, so a restart keeps the pause.
     SetPause {

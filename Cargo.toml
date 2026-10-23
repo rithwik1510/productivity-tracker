@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/tracker-api", "crates/tracker", "crates/tracker-win", "src-tauri"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 publish = false
 
@@ -39,3 +39,4 @@ specta-typescript = "=0.0.12"
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"

@@ -44,6 +44,7 @@ const catalogQuery = queryOptions({ queryKey: ["catalog"], queryFn: commands.lis
 const sitesQuery = queryOptions({ queryKey: ["sites"], queryFn: commands.listSites });
 const settingsQuery = queryOptions({ queryKey: ["settings"], queryFn: commands.getSettings });
 const statusQuery = queryOptions({ queryKey: ["status"], queryFn: commands.getStatus });
+const updateQuery = queryOptions({ queryKey: ["update"], queryFn: commands.getUpdate });
 const versionQuery = queryOptions({
   queryKey: ["version"],
   queryFn: getVersion,
@@ -71,6 +72,7 @@ export function prefetchView(view: View) {
     case "day":
       void qc.ensureQueryData(dayQuery(ui.selectedDay));
       void qc.ensureQueryData(statusQuery);
+      void qc.ensureQueryData(updateQuery);
       break;
     case "history":
       void qc.ensureQueryData(shareQuery("all"));
@@ -85,6 +87,7 @@ export function prefetchView(view: View) {
     case "settings":
       void qc.ensureQueryData(settingsQuery);
       void qc.ensureQueryData(versionQuery);
+      void qc.ensureQueryData(updateQuery);
       break;
   }
 }
@@ -335,6 +338,7 @@ export const useSetLaunchAtLogin = () => useSetSetting("launchAtLogin", commands
 export const useSetAppearance = () => useSetSetting("appearance", commands.setAppearance);
 export const useSetAwayAfter = () => useSetSetting("awayAfterMinutes", commands.setAwayAfter);
 export const useSetWaitingCredit = () => useSetSetting("waitingCredit", commands.setWaitingCredit);
+export const useSetAutoUpdate = () => useSetSetting("autoUpdate", commands.setAutoUpdate);
 
 export function useCompleteOnboarding() {
   const qc = useQueryClient();
@@ -394,3 +398,34 @@ export function useDeleteAllData() {
 
 /** The app version Tauri reports, so About matches the exe. */
 export const useVersion = () => useQuery(versionQuery);
+
+/**
+ * The update downloaded and waiting for a restart ("0.1.3"), or null (ADR-0009). The backend says
+ * when that changes: a background check finished a download, or a failed install dropped it.
+ */
+export function useUpdate() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    const stop = listen("update-changed", () =>
+      qc.invalidateQueries({ queryKey: updateQuery.queryKey }),
+    );
+    return () => void stop.then((unlisten) => unlisten());
+  }, [qc]);
+  return useQuery(updateQuery);
+}
+
+/**
+ * Settings' "Check for updates". Resolves once a newer version is downloaded (its version) or
+ * this one is the latest (null), and the ready update follows at once everywhere.
+ */
+export function useCheckForUpdates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: commands.checkForUpdates,
+    onSuccess: (version) => qc.setQueryData(updateQuery.queryKey, version),
+  });
+}
+
+/** Flushes the tracker and hands over to the installer, which relaunches the app; on success the
+ * window goes with the process, so only a failure comes back. */
+export const useRestartToUpdate = () => useMutation({ mutationFn: commands.restartToUpdate });

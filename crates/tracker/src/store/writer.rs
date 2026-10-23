@@ -365,6 +365,14 @@ impl Writer {
         Ok(())
     }
 
+    pub(crate) fn set_auto_update(&self, enabled: bool) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE settings SET auto_update = ?1 WHERE id = 1",
+            [enabled],
+        )?;
+        Ok(())
+    }
+
     /// `None` resumes.
     pub(crate) fn set_paused_until(&self, until_ms: Option<i64>) -> Result<(), StoreError> {
         self.conn.execute(

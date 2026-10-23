@@ -68,6 +68,8 @@ pub struct Settings {
     /// "Keep counting minimized apps": waiting credit (ADR-0007) on or off. Off on a new install
     /// and after Delete all; an install onboarded before the setting existed keeps it on.
     pub waiting_credit: bool,
+    /// "Check for updates automatically" (ADR-0009): on by default, existing installs included.
+    pub auto_update: bool,
 }
 
 /// What `export_data` writes: daily totals as CSV, or everything as JSON.

@@ -2144,6 +2144,48 @@ fn a_new_install_starts_with_waiting_credit_off() {
     assert!(!reader.settings().unwrap().waiting_credit);
 }
 
+/// "Check for updates automatically" (ADR-0009): on for an upgraded install as for a new one, kept
+/// across a restart once turned off, and on again after Delete all.
+#[test]
+fn update_checks_default_on_and_the_switch_persists() {
+    let dir = TempDir::new("auto-update");
+    {
+        let conn = rusqlite::Connection::open(dir.0.join("tracker.db")).unwrap();
+        conn.execute_batch(include_str!("../src/store/schema_v1.sql"))
+            .unwrap();
+        conn.execute_batch("UPDATE settings SET onboarded = 1; PRAGMA user_version = 1;")
+            .unwrap();
+    }
+    let auto_update = || {
+        let reader = Reader::open(&dir.0, tz, || 0).unwrap();
+        reader.settings().unwrap().auto_update
+    };
+    let send =
+        |tracker: &mut Tracker, message: Control, rx: mpsc::Receiver<Result<(), ApiError>>| {
+            assert!(tracker.handle(message).is_continue());
+            rx.recv().unwrap().unwrap();
+        };
+
+    let mut tracker = Tracker::open(&dir.0).unwrap();
+    assert!(auto_update());
+    let (reply, rx) = mpsc::channel();
+    send(
+        &mut tracker,
+        Control::SetAutoUpdate {
+            enabled: false,
+            reply,
+        },
+        rx,
+    );
+    drop(tracker);
+
+    let mut tracker = Tracker::open(&dir.0).unwrap();
+    assert!(!auto_update());
+    let (reply, rx) = mpsc::channel();
+    send(&mut tracker, Control::DeleteAllData { reply }, rx);
+    assert!(auto_update());
+}
+
 #[test]
 fn waiting_credit_off_counts_the_foreground() {
     let mut sim = Sim::new("wait-off");
@@ -2269,7 +2311,8 @@ fn json_export_has_every_row_as_stored() {
             "dailyGoalMinutes": 360,
             "awayAfterMinutes": 5,
             "waitingCredit": true,
-            "appearance": "glass"
+            "appearance": "glass",
+            "autoUpdate": true
         })
     );
     assert_eq!(

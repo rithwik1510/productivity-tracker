@@ -70,6 +70,17 @@ removedSecs: number } |
 	setAwayAfter: (minutes: number) => __TAURI_INVOKE<null>("set_away_after", { minutes }),
 	/**  Waiting credit (ADR-0007) on or off. */
 	setWaitingCredit: (enabled: boolean) => __TAURI_INVOKE<null>("set_waiting_credit", { enabled }),
+	/**  "Check for updates automatically" (ADR-0009) on or off. */
+	setAutoUpdate: (enabled: boolean) => __TAURI_INVOKE<null>("set_auto_update", { enabled }),
+	/**  The version downloaded and waiting for a restart ("0.1.3"), or null. */
+	getUpdate: () => __TAURI_INVOKE<string | null>("get_update"),
+	/**
+	 *  Settings' "Check for updates": asks GitHub now and downloads a newer version. Resolves to the
+	 *  version ready to install, or null when this one is the latest; rejects when it couldn't check.
+	 */
+	checkForUpdates: () => __TAURI_INVOKE<string | null>("check_for_updates"),
+	/**  Flushes the tracker, then installs the ready update and relaunches. Only returns on failure. */
+	restartToUpdate: () => __TAURI_INVOKE<null>("restart_to_update"),
 	/**
 	 *  When the current pause ends, as a local clock time ("3:40 PM"); null when not paused. Pausing
 	 *  is the tray's; the window only shows it and resumes.
@@ -208,6 +219,8 @@ export type Settings = {
 	 *  and after Delete all; an install onboarded before the setting existed keeps it on.
 	 */
 	waitingCredit: boolean,
+	/**  "Check for updates automatically" (ADR-0009): on by default, existing installs included. */
+	autoUpdate: boolean,
 };
 
 export type Share = {

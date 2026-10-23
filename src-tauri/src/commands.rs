@@ -17,7 +17,7 @@ use tracker_api::{
 use tracker_win::catalog;
 
 use crate::state::AppState;
-use crate::{glass, tray, window};
+use crate::{glass, tray, update, window};
 
 /// Runs `body` on the blocking pool with the app state.
 async fn blocking<T: Send + 'static>(
@@ -255,6 +255,43 @@ pub async fn set_waiting_credit(app: AppHandle, enabled: bool) -> Result<(), Api
         s.request(|reply| Control::SetWaitingCredit { enabled, reply })
     })
     .await
+}
+
+/// "Check for updates automatically" (ADR-0009) on or off.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_auto_update(app: AppHandle, enabled: bool) -> Result<(), ApiError> {
+    blocking(app, move |_, s| {
+        s.request(|reply| Control::SetAutoUpdate { enabled, reply })
+    })
+    .await
+}
+
+/// The version downloaded and waiting for a restart ("0.1.3"), or null.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_update(app: AppHandle) -> Result<Option<String>, ApiError> {
+    Ok(update::ready_version(&app))
+}
+
+/// Settings' "Check for updates": asks GitHub now and downloads a newer version. Resolves to the
+/// version ready to install, or null when this one is the latest; rejects when it couldn't check.
+#[tauri::command]
+#[specta::specta]
+pub async fn check_for_updates(app: AppHandle) -> Result<Option<String>, ApiError> {
+    update::check(&app).await.map_err(|e| {
+        tracing::info!("update check failed: {e}");
+        ApiError {
+            message: format!("Couldn't check for updates: {e}"),
+        }
+    })
+}
+
+/// Flushes the tracker, then installs the ready update and relaunches. Only returns on failure.
+#[tauri::command]
+#[specta::specta]
+pub async fn restart_to_update(app: AppHandle) -> Result<(), ApiError> {
+    blocking(app, |app, _| update::restart(app)).await
 }
 
 /// When the current pause ends, as a local clock time ("3:40 PM"); null when not paused. Pausing

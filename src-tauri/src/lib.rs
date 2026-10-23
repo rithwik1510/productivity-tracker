@@ -1,10 +1,12 @@
 //! Thin Tauri shell around the tracker crates (ADR-0004): commands, tray, window lifecycle,
-//! single instance, autostart and the asset scope. Startup order is plan section 6.
+//! single instance, autostart, updates (ADR-0009) and the asset scope. Startup order is plan
+//! section 6.
 
 mod commands;
 mod glass;
 mod state;
 mod tray;
+mod update;
 mod window;
 
 use std::error::Error;
@@ -48,6 +50,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::set_appearance,
             commands::set_away_after,
             commands::set_waiting_credit,
+            commands::set_auto_update,
+            commands::get_update,
+            commands::check_for_updates,
+            commands::restart_to_update,
             commands::get_pause,
             commands::resume_tracking,
             commands::export_data,
@@ -70,8 +76,10 @@ pub fn run() {
             .arg(AUTOSTART_ARG)
             .build(),
     );
-    // The export's save dialog, called from Rust only, so the UI needs no dialog permission.
+    // The export's save dialog, called from Rust only, so the UI needs no dialog permission. The
+    // updater too: `update.rs` drives it, and the UI only calls app commands.
     app.plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(builder.invoke_handler())
         .setup(|app| {
             // Tauri panics on a setup error, which a release build (no console) never shows.
@@ -118,6 +126,7 @@ fn setup(app: &mut App) -> Result<(), Box<dyn Error>> {
         .allow_directory(state.data_dir.join(tracker_api::ICONS_DIR_NAME), false)?;
     let onboarded = state.read(|r| r.settings())?.onboarded;
     app.manage(state);
+    app.manage(update::Updates::default());
     tray::build(app)?;
     let handle = app.handle().clone();
     watcher.set_theme_hook(Box::new(move || tray::update_icon(&handle)));
@@ -126,6 +135,8 @@ fn setup(app: &mut App) -> Result<(), Box<dyn Error>> {
     if !onboarded || !std::env::args().any(|arg| arg == AUTOSTART_ARG) {
         window::open(app.handle());
     }
+    #[cfg(not(debug_assertions))]
+    update::start(app.handle())?;
     tracing::info!("started");
     Ok(())
 }
