@@ -19,7 +19,7 @@ use tracker::days::{day_bounds, day_of, next_day_start};
 use tracker::{Reader, RuntimeHandle, Tracker};
 use tracker_api::{
     ApiError, AppIdentity, Appearance, BrowserView, Category, Control, DayItem, ExportFormat,
-    Foreground, NowTracking, Sample, Sampler, Site, TrackerStatus,
+    Foreground, NowTracking, Sample, Sampler, Site, TrackerStatus, exe_identity,
 };
 
 use Category::{Entertainment, Productive};
@@ -219,6 +219,15 @@ impl Sim {
             identity: exe_id(exe),
             name: exe.into(),
             category,
+            reply,
+        });
+    }
+
+    /// "Counts while I watch" (ADR-0008) for an app that has a row.
+    fn set_watch(&mut self, exe: &str, watch: bool) {
+        self.control(|reply| Control::SetAppWatch {
+            identity: exe_id(exe),
+            watch,
             reply,
         });
     }
@@ -1679,6 +1688,295 @@ fn waiting_credit_crossing_4am_splits_between_days() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Watched apps (ADR-0008), browsers and Chromium forks (issue 18)
+// ---------------------------------------------------------------------------------------------
+
+/// T3 Code is a preset agent app, so tracking it turns "Counts while I watch" on.
+const T3: &str = "t3 code (nightly).exe";
+
+#[test]
+fn a_watched_app_counts_20_idle_minutes() {
+    let mut sim = Sim::new("watch-20");
+    sim.track_app(T3, Some(Productive));
+    sim.focus(app(T3));
+    sim.work(61);
+    // The agent works for 20 minutes while the owner watches without touching anything.
+    sim.idle(1200);
+    assert_eq!(
+        sim.tracking().map(|n| (n.name, n.watching)),
+        Some((T3.into(), true))
+    );
+    // They type again: nothing was trimmed, and the line stops saying "watching".
+    sim.work(60);
+    assert_eq!(
+        sim.tracking().map(|n| (n.name, n.watching)),
+        Some((T3.into(), false))
+    );
+    sim.shutdown();
+    assert_eq!(sim.secs(T3, Productive), 1320);
+    sim.assert_counted_once(1320 * SEC);
+}
+
+#[test]
+fn a_watched_app_keeps_30_minutes_of_a_45_minute_wait() {
+    let mut sim = Sim::new("watch-45");
+    sim.track_app(T3, Some(Productive));
+    sim.track_app("code.exe", Some(Productive));
+    sim.focus(app(T3));
+    sim.work(61);
+    // 30 minutes after the input at t61 the watch is over: Away, trimmed back to t61 + 30 min.
+    sim.idle(1801);
+    assert_eq!(
+        sim.tracker.status(),
+        TrackerStatus::Away { removed_secs: 0 }
+    );
+    // The spent watch doesn't start a new stretch, whatever comes to the front without input.
+    sim.focus(app("code.exe"));
+    sim.idle(1);
+    assert_eq!(
+        sim.tracker.status(),
+        TrackerStatus::Away { removed_secs: 0 }
+    );
+    sim.idle(898);
+    sim.shutdown();
+    assert_eq!(sim.rows(), vec![(sim.t(1), sim.t(1861), false)]);
+    assert_eq!(sim.secs(T3, Productive), 60 + 1800);
+}
+
+#[test]
+fn a_lock_during_a_watch_ends_it_at_once() {
+    let mut sim = Sim::new("watch-lock");
+    sim.track_app(T3, Some(Productive));
+    sim.focus(app(T3));
+    sim.work(61);
+    sim.idle(600);
+    sim.lock();
+    sim.idle(1);
+    assert_eq!(
+        sim.tracker.status(),
+        TrackerStatus::Away { removed_secs: 1 }
+    );
+    sim.idle(1200);
+    sim.shutdown();
+    // The watched minutes count up to the lock, less its 2 s of Win+L noise; nothing while locked.
+    assert_eq!(sim.rows(), vec![(sim.t(1), sim.t(660), false)]);
+}
+
+#[test]
+fn an_unwatched_app_is_away_at_the_threshold() {
+    let mut sim = Sim::new("watch-off");
+    // Not a preset: off until the owner turns it on.
+    sim.track_app("grok bot.exe", Some(Productive));
+    sim.focus(app("grok bot.exe"));
+    sim.work(61);
+    sim.idle(600);
+    assert_eq!(sim.secs("grok bot.exe", Productive), 60);
+    sim.set_watch("grok bot.exe", true);
+    sim.work(61);
+    sim.idle(600);
+    sim.shutdown();
+    assert_eq!(sim.secs("grok bot.exe", Productive), 60 + 60 + 600);
+
+    // The setting applies only while the app is Productive, and never to a browser.
+    let mut sim = Sim::new("watch-ignored");
+    sim.track_app(T3, Some(Entertainment));
+    sim.track_app("chrome.exe", Some(Productive));
+    sim.set_watch("chrome.exe", true);
+    sim.focus(app(T3));
+    sim.work(61);
+    sim.idle(600);
+    sim.focus(tab("chrome.exe", Some("example.com"), "", false));
+    sim.work(61);
+    sim.idle(600);
+    sim.shutdown();
+    assert_eq!(sim.secs(T3, Entertainment), 60);
+    assert_eq!(sim.secs("chrome.exe", Productive), 60);
+}
+
+#[test]
+fn switching_away_from_a_watched_app_returns_to_the_normal_rules() {
+    let mut sim = Sim::new("watch-switch");
+    sim.track_app(T3, Some(Productive));
+    sim.track_app("code.exe", Some(Productive));
+    sim.focus(app(T3));
+    sim.work(61);
+    sim.idle(600);
+    // VS Code comes to the front on its own; 5 minutes later the owner is Away, and the trim goes
+    // back to the last watched second, keeping T3 Code's watched time.
+    sim.focus(app("code.exe"));
+    sim.idle(300);
+    // Away now, and a watched app coming back to the front without input doesn't start a stretch.
+    sim.focus(app(T3));
+    sim.idle(60);
+    sim.shutdown();
+    assert_eq!(sim.secs(T3, Productive), 660);
+    assert_eq!(sim.secs("code.exe", Productive), 0);
+}
+
+#[test]
+fn a_minimized_browser_never_waits_in() {
+    let mut sim = Sim::new("wait-browser");
+    let helium = "chrome.exe|helium";
+    sim.shown(&["chrome.exe", helium, "claude.exe"]);
+    sim.track_app("chrome.exe", Some(Productive));
+    sim.track_app(helium, Some(Productive));
+    sim.track_app("claude.exe", Some(Productive));
+    // A minimized Productive browser, Chrome or a fork, is music or a video left playing.
+    sim.minimize("chrome.exe");
+    sim.minimize(helium);
+    sim.focus(app("notepad.exe"));
+    sim.work(61);
+    assert_eq!(sim.rows(), vec![]);
+    // A minimized agent app still waits in.
+    sim.minimize("claude.exe");
+    sim.work(60);
+    sim.shutdown();
+    assert_eq!(sim.waiting_rows(), vec![(sim.t(62), sim.t(121), false)]);
+    sim.assert_counted_once(60 * SEC);
+}
+
+#[test]
+fn helium_is_its_own_browser_beside_chrome() {
+    // The sampler and the catalog key a `chrome.exe` by its ProductName; other exes never read it.
+    let key = |file: &str, product: Option<&str>| exe_identity(file, || product.map(Into::into));
+    assert_eq!(
+        key("chrome.exe", Some("Helium")),
+        exe_id("chrome.exe|helium")
+    );
+    assert_eq!(
+        key("Chrome.exe", Some("Google Chrome")),
+        exe_id("chrome.exe")
+    );
+    assert_eq!(key("chrome.exe", Some(" ")), exe_id("chrome.exe"));
+    assert_eq!(key("chrome.exe", None), exe_id("chrome.exe"));
+    assert_eq!(
+        exe_identity("Code.exe", || panic!("asked for code.exe")),
+        exe_id("code.exe")
+    );
+
+    let helium = "chrome.exe|helium";
+    let mut sim = Sim::new("helium");
+    sim.track_app("chrome.exe", Some(Productive));
+    sim.track_site("youtube.com", None, Entertainment);
+    // YouTube in Helium is YouTube, as in any browser; other sites in an untracked Helium count
+    // nothing, instead of as Productive Chrome.
+    sim.focus(tab(helium, Some("www.youtube.com"), "", false));
+    sim.work(61);
+    sim.focus(tab(helium, Some("example.com"), "", false));
+    sim.work(60);
+    sim.focus(tab("chrome.exe", Some("example.com"), "", false));
+    sim.work(60);
+    // Tracked, Helium is a browser of its own: its own row, and its sites still override it.
+    sim.track_app(helium, Some(Entertainment));
+    sim.focus(tab(helium, Some("example.com"), "", false));
+    sim.work(60);
+    sim.shutdown();
+    // Each switch lands on a tick: YouTube t1-t62, Chrome t122-t182, Helium t182-t241.
+    assert_eq!(sim.secs("youtube.com", Entertainment), 61);
+    assert_eq!(sim.secs("chrome.exe", Productive), 60);
+    assert_eq!(sim.secs(helium, Entertainment), 59);
+    let day = sim.reader().day(None).unwrap();
+    let mut browsers: Vec<_> = day
+        .items
+        .iter()
+        .filter(|i| i.is_browser)
+        .map(|i| i.name.as_str())
+        .collect();
+    browsers.sort_unstable();
+    assert_eq!(browsers, ["chrome.exe", helium]);
+}
+
+/// The owner's v5 database: tracking a preset agent app now turns its watch on, so the migration
+/// does the same for the ones already tracked.
+#[test]
+fn v6_turns_watch_on_for_tracked_agent_apps() {
+    let dir = TempDir::new("migrate-v6");
+    {
+        let conn = rusqlite::Connection::open(dir.0.join("tracker.db")).unwrap();
+        for sql in [
+            include_str!("../src/store/schema_v1.sql"),
+            include_str!("../src/store/schema_v2.sql"),
+            include_str!("../src/store/schema_v3.sql"),
+            include_str!("../src/store/schema_v4.sql"),
+            include_str!("../src/store/schema_v5.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO app (kind, key, name, category) VALUES
+               ('exe', 'actinglessons.exe', 'Acting Lessons', NULL),
+               ('aumid', 'Claude_pzs8sxrjxfjjc!Claude', 'Claude', 'productive'),
+               ('aumid', 'OpenAI.Codex_2p2nqsd0c76g0!App', 'ChatGPT', 'productive'),
+               ('exe', 'grok bot.exe', 'Grok Bot', 'productive'),
+               ('exe', 't3 code (nightly).exe', 'T3 Code (Nightly)', 'productive'),
+               ('exe', 'chrome.exe', 'Google Chrome', 'productive'),
+               ('aumid', 'OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0!ChatGPT', 'ChatGPT', 'entertainment'),
+               ('exe', 't3 code.exe', 'T3 Code', NULL);
+             PRAGMA user_version = 5;",
+        )
+        .unwrap();
+    }
+    let mut tracker = Tracker::open(&dir.0).unwrap();
+    let reader = Reader::open(&dir.0, tz, || 0).unwrap();
+    let watched = |reader: &Reader| -> Vec<String> {
+        let mut names: Vec<_> = reader
+            .stored_apps()
+            .unwrap()
+            .into_iter()
+            .filter(|a| a.watch)
+            .map(|a| a.name)
+            .collect();
+        names.sort_unstable();
+        names
+    };
+    // Tracked presets only: not Grok Bot, Chrome, or the untracked old T3 Code row.
+    assert_eq!(
+        watched(&reader),
+        ["ChatGPT", "ChatGPT", "Claude", "T3 Code (Nightly)"]
+    );
+
+    // A preset app's first row starts watched, any other's doesn't, and a row that existed keeps
+    // its setting when tracked again.
+    let mut send = |message: Control| assert!(tracker.handle(message).is_continue());
+    for (identity, name) in [
+        (
+            AppIdentity::Aumid {
+                key: "Claude_pzs8sxrjxfjjc!ClaudeBeta".into(),
+            },
+            "Claude Beta",
+        ),
+        (exe_id("t3 code.exe"), "T3 Code"),
+        (exe_id("cursor.exe"), "Cursor"),
+    ] {
+        let (reply, rx) = mpsc::channel();
+        send(Control::SetAppCategory {
+            identity,
+            name: name.into(),
+            category: Some(Productive),
+            reply,
+        });
+        rx.recv().unwrap().unwrap();
+    }
+    let (reply, rx) = mpsc::channel();
+    send(Control::SetAppWatch {
+        identity: exe_id("notepad.exe"),
+        watch: true,
+        reply,
+    });
+    assert!(rx.recv().unwrap().is_err(), "an app without a row");
+    assert_eq!(
+        watched(&reader),
+        [
+            "ChatGPT",
+            "ChatGPT",
+            "Claude",
+            "Claude Beta",
+            "T3 Code (Nightly)"
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
 // Settings: pause, the Tracking choices, export, delete all (issue 13)
 // ---------------------------------------------------------------------------------------------
 
@@ -1903,7 +2201,7 @@ fn delete_all_mid_interval_starts_over() {
     );
     assert_eq!(reader.paused_until_ms().unwrap(), None);
     assert!(reader.sites().unwrap().is_empty());
-    assert!(reader.tracked_apps().unwrap().is_empty());
+    assert!(reader.stored_apps().unwrap().is_empty());
     assert!(reader.day(None).unwrap().items.is_empty());
     // The icons go; their folder stays for the catalog and the asset scope.
     assert_eq!(fs::read_dir(&icons).unwrap().count(), 0);
@@ -1980,7 +2278,8 @@ fn json_export_has_every_row_as_stored() {
             "id": 1,
             "identity": { "kind": "exe", "key": "code.exe" },
             "name": "code.exe",
-            "category": null
+            "category": null,
+            "watch": false
         }])
     );
     assert_eq!(json["sites"][0]["domain"], "youtube.com");

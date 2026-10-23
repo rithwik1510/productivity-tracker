@@ -128,7 +128,7 @@ export function SettingsView() {
         </SettingRow>
         <SettingRow
           title="Keep counting minimized apps"
-          description="A Productive app you minimize keeps counting for up to 30 min while nothing Productive is in front."
+          description="A Productive app you minimize keeps counting for up to 30 min while nothing Productive is in front. Browsers don't."
         >
           <Switch
             label="Keep counting minimized apps"

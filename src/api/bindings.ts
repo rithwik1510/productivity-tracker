@@ -18,6 +18,8 @@ export const commands = {
 	listCatalog: () => __TAURI_INVOKE<CatalogApp[]>("list_catalog"),
 	/**  `category: None` stops tracking the app; its history stays. */
 	setAppCategory: (identity: AppIdentity, name: string, category: "productive" | "entertainment" | null) => __TAURI_INVOKE<null>("set_app_category", { identity, name, category }),
+	/**  "Counts while I watch" for an app that is or was tracked. */
+	setAppWatch: (identity: AppIdentity, watch: boolean) => __TAURI_INVOKE<null>("set_app_watch", { identity, watch }),
 	/**  Every site row, tracked or not, ordered by domain. */
 	listSites: () => __TAURI_INVOKE<Site[]>("list_sites"),
 	/**
@@ -97,7 +99,10 @@ export type ApiError = {
 
 /**  How an app is recognised over time (ADR-0003). Wire shape: `{ kind: "exe" | "aumid", key }`. */
 export type AppIdentity = 
-/**  Lowercase exe file name, e.g. `discord.exe`. */
+/**
+ *  Lowercase exe file name, e.g. `discord.exe`; a Chromium fork that ships `chrome.exe` adds
+ *  its product name, e.g. `chrome.exe|helium` (`exe_identity`).
+ */
 { kind: "exe"; key: string } | 
 /**  AppUserModelID of a packaged app. */
 { kind: "aumid"; key: string };
@@ -117,6 +122,12 @@ export type CatalogApp = {
 	category: Category | null,
 	/**  Has an app window open right now. Computed per call; nothing watches or stores it. */
 	isRunning: boolean,
+	/**
+	 *  "Counts while I watch" (ADR-0008): the stored setting of an app that has a row, else
+	 *  whether tracking it would turn it on (`watched_by_default`). It applies only while the app
+	 *  is Productive, and never to a browser.
+	 */
+	watch: boolean,
 };
 
 /**
@@ -174,6 +185,11 @@ export type NowTracking = {
 	 *  foreground isn't Productive. Always false for sites.
 	 */
 	waiting: boolean,
+	/**
+	 *  It counts only because it is a watched app in front (ADR-0008): there has been no input or
+	 *  sound for longer than "Count as away after", but for less than 30 minutes.
+	 */
+	watching: boolean,
 };
 
 export type Settings = {

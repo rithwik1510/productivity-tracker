@@ -198,6 +198,8 @@ function StatusLine({ status }: { status: TrackerStatus }) {
             {status.isBrowser && " · other sites"}
             {/* Minimized and counting as waiting credit (ADR-0007). */}
             {status.waiting && " · waiting"}
+            {/* Counting without input only because it is watched (ADR-0008). */}
+            {status.watching && " · watching"}
           </span>
         </p>
       );

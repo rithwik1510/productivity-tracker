@@ -79,18 +79,19 @@ pub async fn list_catalog(app: AppHandle) -> Result<Vec<CatalogApp>, ApiError> {
         .map_err(|e| ApiError {
             message: format!("Couldn't list your apps: {e}"),
         })?;
-        let mut tracked: HashMap<AppIdentity, CatalogApp> = s
-            .read(Reader::tracked_apps)?
+        let mut stored: HashMap<AppIdentity, CatalogApp> = s
+            .read(Reader::stored_apps)?
             .into_iter()
             .map(|app| (app.identity.clone(), app))
             .collect();
         for app in &mut apps {
-            if let Some(row) = tracked.remove(&app.identity) {
+            if let Some(row) = stored.remove(&app.identity) {
                 app.category = row.category;
+                app.watch = row.watch;
             }
         }
         // Tracked apps that are neither installed nor running keep their stored name.
-        apps.extend(tracked.into_values());
+        apps.extend(stored.into_values().filter(|row| row.category.is_some()));
         Ok(apps)
     })
     .await
@@ -110,6 +111,24 @@ pub async fn set_app_category(
             identity,
             name,
             category,
+            reply,
+        })
+    })
+    .await
+}
+
+/// "Counts while I watch" for an app that is or was tracked.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_app_watch(
+    app: AppHandle,
+    identity: AppIdentity,
+    watch: bool,
+) -> Result<(), ApiError> {
+    blocking(app, move |_, s| {
+        s.request(|reply| Control::SetAppWatch {
+            identity,
+            watch,
             reply,
         })
     })

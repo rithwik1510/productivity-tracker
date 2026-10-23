@@ -78,6 +78,80 @@ test("a tile's popover changes its category, and a refusal rolls it back", async
   await expect(tile(page, "Figma")).toHaveAccessibleName("Figma, Productive");
 });
 
+test("'Counts while I watch' is offered for Productive apps that aren't browsers", async ({
+  page,
+}) => {
+  const watchSwitch = page.getByRole("switch", { name: "Counts while I watch" });
+  const popover = async (name: string) => {
+    await tile(page, name).click();
+    await expect(page.getByRole("dialog", { name })).toBeVisible();
+  };
+  await open(page, "?fixture=browserAndSite");
+  await openApps(page);
+
+  // Claude is watched; switching it off is stored, and the catalog lists it off from then on.
+  await popover("Claude");
+  await expect(watchSwitch).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("dialog")).toContainText("for up to 30 min");
+  await watchSwitch.click();
+  await expect(watchSwitch).toHaveAttribute("aria-checked", "false");
+  // The switch doesn't close the popover; Escape does.
+  await page.keyboard.press("Escape");
+  const stored = () =>
+    page.evaluate(async () => {
+      // The mock backend itself, past the UI's optimistic cache.
+      type Ipc = { invoke: (cmd: string) => Promise<{ name: string; watch: boolean }[]> };
+      const ipc = (window as unknown as { __TAURI_INTERNALS__: Ipc }).__TAURI_INTERNALS__;
+      const apps = await ipc.invoke("list_catalog");
+      return apps.find((a) => a.name === "Claude")?.watch;
+    });
+  await expect.poll(stored).toBe(false);
+  await popover("Claude");
+  await expect(watchSwitch).toHaveAttribute("aria-checked", "false");
+  await page.keyboard.press("Escape");
+  await popover("Visual Studio Code");
+  await expect(watchSwitch).toHaveAttribute("aria-checked", "false");
+  await page.keyboard.press("Escape");
+
+  // Not for an Entertainment app, a Productive browser, an untracked app or a site.
+  for (const name of ["Spotify", "Google Chrome", "Discord", "github.com"]) {
+    await popover(name);
+    await expect(watchSwitch).toHaveCount(0);
+    await page.keyboard.press("Escape");
+  }
+
+  // A refusal flips it back and says why.
+  await open(page, "?fail=set_app_watch");
+  await openApps(page);
+  await popover("Claude");
+  await watchSwitch.click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText("Mock failure");
+  await expect(watchSwitch).toHaveAttribute("aria-checked", "true");
+});
+
+test("Helium, which ships as chrome.exe, is its own browser beside Chrome", async ({ page }) => {
+  await open(page);
+  await openApps(page);
+  const running = page.getByRole("group", { name: "Running now" });
+  await expect(
+    running.getByRole("button", { name: "Google Chrome, Not tracked, browser" }),
+  ).toBeVisible();
+  await expect(running.getByRole("button", { name: "Helium, Not tracked, browser" })).toBeVisible();
+  await page.getByRole("searchbox", { name: "Search apps and sites" }).fill("chrome");
+  const results = page.getByRole("region", { name: "Results" });
+  await expect(results.getByRole("button", { name: /^(Google Chrome|Helium),/ })).toHaveCount(2);
+  // Tracking one leaves the other alone.
+  await tile(page, "Helium").click();
+  await page
+    .getByRole("radiogroup", { name: "Category for Helium" })
+    .getByRole("radio", { name: "Entertainment" })
+    .click();
+  await expect(tile(page, "Helium")).toHaveAccessibleName("Helium, Entertainment, browser");
+  await expect(tile(page, "Google Chrome")).toHaveAccessibleName(
+    "Google Chrome, Not tracked, browser",
+  );
+});
+
 test("adding a site, with domain and keyword validation", async ({ page }) => {
   await open(page);
   await openApps(page);
@@ -295,6 +369,9 @@ test("a Day row notes the waiting part of its time", async ({ page }) => {
 test("the live line says when its app is waiting in, minimized", async ({ page }) => {
   await open(page, "?waiting=1");
   await expect(page.getByText("Tracking · Claude · waiting")).toBeVisible();
+  // A watched app counting without input says so (ADR-0008).
+  await open(page, "?watching=1");
+  await expect(page.getByText("Tracking · Claude · watching")).toBeVisible();
   await open(page);
   await expect(page.getByText("Tracking · Visual Studio Code", { exact: true })).toBeVisible();
 });
@@ -386,7 +463,7 @@ test("Settings: export asks the backend for each format; About shows the version
   await expect(data.getByRole("alert")).toHaveCount(0);
 
   const about = page.getByRole("region", { name: "About" });
-  await expect(about).toContainText("0.1.0");
+  await expect(about).toContainText("0.1.1");
   await expect(about).toContainText("MIT License");
 
   await open(page, "?fail=export_data");

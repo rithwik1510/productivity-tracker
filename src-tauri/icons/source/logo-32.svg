@@ -1,0 +1,11 @@
+<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <title>Productivity Tracker</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d2330"/><stop offset="1" stop-color="#0b0c0f"/></linearGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7db3ff"/><stop offset="1" stop-color="#3d6fd6"/></linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7.5" fill="url(#tile)"/>
+  <rect x=".5" y=".5" width="31" height="31" rx="7" fill="none" stroke="#fff" stroke-opacity=".09"/>
+  <path d="M11 25V9" stroke="#f2f4f8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M11 9h5a5 5 0 0 1 0 10h-1" fill="none" stroke="url(#arc)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

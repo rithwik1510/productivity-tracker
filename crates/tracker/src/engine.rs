@@ -1,11 +1,13 @@
-//! Pure per-tick logic (plan section 4): target resolution, presence, cutoffs, stretches, the 1 h
-//! roll, waiting credit (ADR-0007) and pause. No I/O: each tick turns a `Sample` into `Op`s that
-//! the runtime applies to the store.
+//! Pure per-tick logic (plan section 4): target resolution, presence (with watched apps,
+//! ADR-0008), cutoffs, stretches, the 1 h roll, waiting credit (ADR-0007) and pause. No I/O: each
+//! tick turns a `Sample` into `Op`s that the runtime applies to the store.
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use tracker_api::{AppIdentity, Category, Foreground, Sample, TargetRef, normalize_domain};
+use tracker_api::{
+    AppIdentity, Category, Foreground, Sample, TargetRef, is_browser, normalize_domain,
+};
 
 /// Sound alone keeps the user Active at most this long after the last input.
 const INPUT_CAP_MS: i64 = 2 * 3_600_000;
@@ -26,6 +28,9 @@ const ROLL_MS: i64 = 3_600_000 - 1_000;
 /// minimized after being seen not minimized (ADR-0007). This also keeps waiting rows far shorter
 /// than the roll.
 const MINIMIZED_CREDIT_MS: i64 = 30 * 60_000;
+/// A watched app in front keeps an Active stretch going for at most this long after the last input
+/// or sound (ADR-0008), the same 30 minutes as waiting credit.
+const WATCH_MS: i64 = 30 * 60_000;
 
 /// What the engine asks the store to do. The store owns row ids; the engine never sees them.
 /// At most one row is open at a time, so Extend and Close need no name for it.
@@ -66,6 +71,8 @@ pub struct TrackedApp {
     /// The stored name, for `Tracker::now`.
     pub name: String,
     pub category: Category,
+    /// "Counts while I watch" (ADR-0008); applies only while Productive, never to a browser.
+    pub watch: bool,
 }
 
 #[derive(Debug)]
@@ -142,6 +149,12 @@ pub struct Engine {
     last_input_ms: i64,
     /// `i64::MIN` = no sound since the last gap.
     last_sound_ms: i64,
+    /// The last tick a watched app in front held the stretch (ADR-0008): evidence of presence like
+    /// input and sound. `i64::MIN` outside a stretch, so it never starts one.
+    last_watched_ms: i64,
+    /// The last tick counted only because a watched app was in front: no input or sound for the
+    /// away threshold, but for less than `WATCH_MS`. For the status line.
+    watching: bool,
     /// Recent ticks before the current one, oldest first, reaching back at least
     /// `LOCK_NOISE_MS` from the newest whenever there is that much history (see `remember`).
     ring: VecDeque<Mark>,
@@ -169,6 +182,8 @@ impl Engine {
             rules,
             last_input_ms: i64::MIN,
             last_sound_ms: i64::MIN,
+            last_watched_ms: i64::MIN,
+            watching: false,
             ring: VecDeque::with_capacity(RING_MAX + 1),
             stretch: None,
             minimized: HashMap::new(),
@@ -215,7 +230,19 @@ impl Engine {
         if audible && !s.away_signal {
             self.last_sound_ms = self.last_sound_ms.max(s.now_ms);
         }
-        let evidence_ms = self.last_input_ms.max(self.last_sound_ms);
+        let heard_ms = self.last_input_ms.max(self.last_sound_ms);
+        let unheard_ms = s.now_ms.saturating_sub(heard_ms);
+        // A watched app in front (ADR-0008) is evidence too, for up to 30 minutes after the last
+        // input or sound, so it keeps the stretch going. It never starts one, and not behind a lock.
+        let watched = self.stretch.is_some()
+            && !s.away_signal
+            && self.watched_in_front(s.foreground.as_ref());
+        let watch_over = watched && unheard_ms > WATCH_MS;
+        if watched && !watch_over {
+            self.last_watched_ms = s.now_ms;
+        }
+        self.watching = watched && !watch_over && unheard_ms >= self.rules.away_after_ms;
+        let evidence_ms = heard_ms.max(self.last_watched_ms);
 
         let capped = s.now_ms.saturating_sub(self.last_input_ms) >= INPUT_CAP_MS;
         let silent = s.now_ms.saturating_sub(evidence_ms) >= self.rules.away_after_ms;
@@ -225,7 +252,7 @@ impl Engine {
             .rules
             .paused_until_ms
             .is_some_and(|until| s.now_ms < until);
-        if !s.away_signal && !capped && !silent && !paused {
+        if !s.away_signal && !capped && !silent && !paused && !watch_over {
             let (key, spent_at) = self.counted_key(s);
             let stretch = self.stretch.get_or_insert(Stretch {
                 start_ms: s.now_ms,
@@ -253,6 +280,10 @@ impl Engine {
             }
             if silent {
                 cutoff = cutoff.min(evidence_ms);
+            }
+            // The watch keeps its 30 minutes; only the time after them goes.
+            if watch_over {
+                cutoff = cutoff.min(heard_ms.saturating_add(WATCH_MS));
             }
             // The runtime ends the stretch when it pauses, so this is only a backstop: end where a
             // shutdown after the previous tick would have.
@@ -301,6 +332,11 @@ impl Engine {
         } else {
             Presence::Away
         }
+    }
+
+    /// Whether the last tick counted only because a watched app was in front (ADR-0008).
+    pub fn watching(&self) -> bool {
+        self.watching
     }
 
     /// The store failed to apply this tick's ops, so the writer no longer follows the engine's
@@ -370,6 +406,9 @@ impl Engine {
     }
 
     fn end_stretch(&mut self, cutoff_ms: i64, ops: &mut Vec<Op>) {
+        // A watch only holds the stretch it was part of: left set, it would start the next one.
+        self.last_watched_ms = i64::MIN;
+        self.watching = false;
         if let Some(stretch) = self.stretch.take() {
             ops.push(Op::EndStretch {
                 cutoff_ms: cutoff_ms.max(stretch.start_ms),
@@ -409,11 +448,13 @@ impl Engine {
     /// nothing). Also returns when
     /// the open waiting row's app ran out of credit, if it has: `now + left`, `left` being <= 0.
     fn counted_key(&self, s: &Sample) -> (Option<Key>, Option<i64>) {
-        // Clock left per minimized app that may wait in: a Tracked App, Productive right now.
-        // Entertainment and untracked apps never do, and sites can't (apps only).
+        // Clock left per minimized app that may wait in: a Tracked App, Productive right now, and
+        // not a browser (a minimized browser is mostly a video or music left playing). Entertainment
+        // and untracked apps never do, and sites can't (apps only).
         let waiting = self.minimized.iter().filter_map(|(identity, &left)| {
             let app = self.targets.apps.get(identity)?;
-            (app.category == Category::Productive).then_some((app.id, left))
+            (app.category == Category::Productive && !is_browser(identity))
+                .then_some((app.id, left))
         });
         let open = self.stretch.as_ref().and_then(|st| st.open.as_ref());
         let spent_at = open
@@ -442,6 +483,14 @@ impl Engine {
                 minimized: true,
             });
         (waiting_in.or(front), spent_at)
+    }
+
+    /// The foreground is a Productive Tracked App set to count while watched (ADR-0008). Never a
+    /// browser, whose time is its sites'.
+    fn watched_in_front(&self, fg: Option<&Foreground>) -> bool {
+        fg.filter(|f| !f.own_process && !is_browser(&f.identity))
+            .and_then(|f| self.targets.apps.get(&f.identity))
+            .is_some_and(|app| app.watch && app.category == Category::Productive)
     }
 
     /// What the foreground counts toward this tick, if anything (plan section 4 "Resolving").

@@ -227,6 +227,35 @@ export function useSetAppCategory() {
   });
 }
 
+/**
+ * "Counts while I watch" (ADR-0008), optimistic like the category and in the same scope, so a
+ * toggle and a category flip reach the backend in click order. A rollback only applies while the
+ * switch still shows the refused value.
+ */
+export function useSetAppWatch() {
+  const qc = useQueryClient();
+  const patch = (identity: AppIdentity, watch: boolean, onlyIf?: boolean) =>
+    qc.setQueryData(catalogQuery.queryKey, (apps) =>
+      apps?.map((a) =>
+        sameIdentity(a.identity, identity) && (onlyIf === undefined || a.watch === onlyIf)
+          ? { ...a, watch }
+          : a,
+      ),
+    );
+  return useMutation({
+    scope: { id: "catalog" },
+    mutationFn: ({ app, watch }: { app: CatalogApp; watch: boolean }) =>
+      commands.setAppWatch(app.identity, watch),
+    onMutate: async ({ app, watch }) => {
+      await qc.cancelQueries({ queryKey: catalogQuery.queryKey });
+      patch(app.identity, watch);
+    },
+    onError: (_error, { app, watch }) => patch(app.identity, app.watch, watch),
+    // Only the status line's "watching" can change now; recorded time doesn't.
+    onSettled: () => qc.invalidateQueries({ queryKey: statusQuery.queryKey }),
+  });
+}
+
 type SiteInput = { domain: string; keyword: string | null; category: Category | null };
 
 /**

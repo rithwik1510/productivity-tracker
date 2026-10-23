@@ -15,6 +15,7 @@ mod process;
 mod session;
 #[cfg(feature = "probe")]
 pub mod spike;
+mod version;
 
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};

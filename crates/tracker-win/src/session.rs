@@ -1,7 +1,9 @@
-//! Lock, disconnect, display-off and end-session notifications (plan section 5 "Session").
+//! Lock, disconnect, display-off and end-session notifications (plan section 5 "Session"), plus
+//! the light/dark theme broadcast the tray icon follows.
 //!
 //! A hidden top-level window on its own thread receives them. It is a real top-level window,
-//! not `HWND_MESSAGE`, because message-only windows don't get the `WM_ENDSESSION` broadcast.
+//! not `HWND_MESSAGE`, because message-only windows don't get the `WM_ENDSESSION` and
+//! `WM_SETTINGCHANGE` broadcasts.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,13 +23,14 @@ use windows::Win32::System::SystemServices::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DispatchMessageW, GetMessageW,
     GetSystemMetrics, KillTimer, MSG, PBT_POWERSETTINGCHANGE, RegisterClassExW, SM_REMOTESESSION,
-    SetTimer, TranslateMessage, WINDOW_EX_STYLE, WM_ENDSESSION, WM_POWERBROADCAST, WM_TIMER,
-    WM_WTSSESSION_CHANGE, WNDCLASSEXW, WS_OVERLAPPED, WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT,
-    WTS_REMOTE_CONNECT, WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
+    SetTimer, TranslateMessage, WINDOW_EX_STYLE, WM_ENDSESSION, WM_POWERBROADCAST,
+    WM_SETTINGCHANGE, WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSEXW, WS_OVERLAPPED,
+    WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_CONNECT, WTS_REMOTE_DISCONNECT,
+    WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
 };
-use windows::core::{PWSTR, Result, w};
+use windows::core::{PCWSTR, PWSTR, Result, w};
 
-type EndSessionHook = Box<dyn Fn() + Send + Sync>;
+type Hook = Box<dyn Fn() + Send + Sync>;
 
 /// The timer that retries a failed `WTSRegisterSessionNotification`, and how often.
 const REGISTER_TIMER_ID: usize = 1;
@@ -43,7 +46,8 @@ pub struct SessionWatcher {
     /// the remote client, while the console's display can be off with the user at work.
     session_display_off: AtomicBool,
     input_event: AtomicBool,
-    end_session_hook: Mutex<Option<EndSessionHook>>,
+    end_session_hook: Mutex<Option<Hook>>,
+    theme_hook: Mutex<Option<Hook>>,
 }
 
 thread_local! {
@@ -62,6 +66,7 @@ impl SessionWatcher {
             session_display_off: AtomicBool::new(false),
             input_event: AtomicBool::new(false),
             end_session_hook: Mutex::new(None),
+            theme_hook: Mutex::new(None),
         });
         let (ready_tx, ready_rx) = mpsc::channel();
         let thread_watcher = Arc::clone(&watcher);
@@ -79,13 +84,14 @@ impl SessionWatcher {
 
     /// Runs on `WM_ENDSESSION(TRUE)` before the window procedure returns, so Windows waits for it.
     /// The shell wires it to `shutdown_and_wait(2 s)`.
-    pub fn set_end_session_hook(&self, hook: EndSessionHook) {
-        // A poisoned lock only means a previous hook panicked; replacing it is still correct.
-        let mut slot = self
-            .end_session_hook
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *slot = Some(hook);
+    pub fn set_end_session_hook(&self, hook: Hook) {
+        set_hook(&self.end_session_hook, hook);
+    }
+
+    /// Runs on `WM_SETTINGCHANGE("ImmersiveColorSet")`, which Windows broadcasts when the light or
+    /// dark theme (or the accent colour) changes. Runs on the watcher thread.
+    pub fn set_theme_hook(&self, hook: Hook) {
+        set_hook(&self.theme_hook, hook);
     }
 
     /// Locked, disconnected, or display off.
@@ -136,15 +142,17 @@ impl SessionWatcher {
         slot.store(state == 0, Ordering::Relaxed);
         tracing::debug!(state, away = self.away_signal(), "display state");
     }
+}
 
-    fn run_end_session_hook(&self) {
-        let hook = self
-            .end_session_hook
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(hook) = hook.as_ref() {
-            hook();
-        }
+// A poisoned lock only means a previous hook panicked; replacing or running it is still correct.
+fn set_hook(slot: &Mutex<Option<Hook>>, hook: Hook) {
+    *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(hook);
+}
+
+fn run_hook(slot: &Mutex<Option<Hook>>) {
+    let hook = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(hook) = hook.as_ref() {
+        hook();
     }
 }
 
@@ -306,7 +314,18 @@ unsafe extern "system" fn window_proc(
                 Some(LRESULT(1))
             }
             WM_ENDSESSION if wparam.0 != 0 => {
-                watcher.run_end_session_hook();
+                run_hook(&watcher.end_session_hook);
+                Some(LRESULT(0))
+            }
+            WM_SETTINGCHANGE => {
+                // SAFETY: for WM_SETTINGCHANGE, lParam is null or a NUL-terminated string naming
+                // the changed area, valid for the duration of the call.
+                let area = PCWSTR(lparam.0 as *const u16);
+                if !area.is_null()
+                    && unsafe { area.to_string() }.is_ok_and(|area| area == "ImmersiveColorSet")
+                {
+                    run_hook(&watcher.theme_hook);
+                }
                 Some(LRESULT(0))
             }
             WM_TIMER if wparam.0 == REGISTER_TIMER_ID => {

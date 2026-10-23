@@ -105,7 +105,8 @@ pub struct KnownBrowser {
 /// shape the omnibox walk expects. A browser whose UI differs (Vivaldi draws its UI as a web page,
 /// Opera has its own) or isn't Chromium (the Firefox family) is title-only. A wrong guess fails
 /// safe either way: no toolbar found means the title fallback, re-walked every few seconds.
-/// Chrome's exe name also covers Chromium, ungoogled-chromium and Supermium.
+/// Chrome's entry also covers the forks that ship `chrome.exe` (Chromium, Helium, Supermium), each
+/// its own app (`exe_identity`).
 pub const KNOWN_BROWSERS: &[KnownBrowser] = &[
     KnownBrowser {
         exe: "chrome.exe",
@@ -158,9 +159,36 @@ pub const KNOWN_BROWSERS: &[KnownBrowser] = &[
     },
 ];
 
+/// Chromium forks (Helium, Chromium, Supermium) ship their browser as `chrome.exe` too.
+const CHROME_EXE: &str = "chrome.exe";
+
+/// The identity of a process or shortcut target without package identity (ADR-0003): its exe file
+/// name, lowercased. A `chrome.exe` whose version-info ProductName isn't Google Chrome's is a fork,
+/// keyed `chrome.exe|<ProductName, lowercased>` (`chrome.exe|helium`), so it is its own app while
+/// Google Chrome keeps `chrome.exe`. `product_name` reads that ProductName and is only called for
+/// `chrome.exe`. `|` can't occur in a file name, so the key stays unambiguous.
+pub fn exe_identity(file_name: &str, product_name: impl FnOnce() -> Option<String>) -> AppIdentity {
+    let exe = file_name.to_lowercase();
+    let fork = (exe == CHROME_EXE)
+        .then(product_name)
+        .flatten()
+        .map(|name| name.trim().to_lowercase())
+        // Every Chrome channel's ProductName starts with "Google Chrome".
+        .filter(|name| !name.is_empty() && !name.starts_with("google chrome"));
+    let key = match fork {
+        Some(name) => format!("{exe}|{name}"),
+        None => exe,
+    };
+    AppIdentity::Exe { key }
+}
+
 fn known_browser(identity: &AppIdentity) -> Option<&'static KnownBrowser> {
     match identity {
-        AppIdentity::Exe { key } => KNOWN_BROWSERS.iter().find(|b| b.exe == key),
+        // A fork's key starts with the exe it ships (`chrome.exe|helium`).
+        AppIdentity::Exe { key } => {
+            let exe = key.split('|').next().unwrap_or(key);
+            KNOWN_BROWSERS.iter().find(|b| b.exe == exe)
+        }
         // Packaged browsers aren't supported in v1.
         AppIdentity::Aumid { .. } => None,
     }
@@ -173,4 +201,16 @@ pub fn is_browser(identity: &AppIdentity) -> bool {
 /// True if the omnibox should be read over UI Automation for this app.
 pub fn uia_browser(identity: &AppIdentity) -> bool {
     known_browser(identity).is_some_and(|b| b.uia)
+}
+
+/// Agent apps whose "Counts while I watch" (ADR-0008) starts on when they are first tracked: the
+/// Claude and ChatGPT/Codex desktop apps (packaged) and T3 Code. `schema_v6.sql` applies the same
+/// list to the apps tracked before the setting existed; keep the two in step.
+pub fn watched_by_default(identity: &AppIdentity) -> bool {
+    match identity {
+        AppIdentity::Aumid { key } => ["Claude_", "OpenAI.Codex_", "OpenAI.ChatGPT"]
+            .iter()
+            .any(|prefix| key.starts_with(prefix)),
+        AppIdentity::Exe { key } => key.starts_with("t3 code"),
+    }
 }

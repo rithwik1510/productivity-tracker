@@ -28,7 +28,8 @@ pub enum Appearance {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AppIdentity {
-    /// Lowercase exe file name, e.g. `discord.exe`.
+    /// Lowercase exe file name, e.g. `discord.exe`; a Chromium fork that ships `chrome.exe` adds
+    /// its product name, e.g. `chrome.exe|helium` (`exe_identity`).
     Exe { key: String },
     /// AppUserModelID of a packaged app.
     Aumid { key: String },
@@ -161,6 +162,10 @@ pub struct CatalogApp {
     pub category: Option<Category>,
     /// Has an app window open right now. Computed per call; nothing watches or stores it.
     pub is_running: bool,
+    /// "Counts while I watch" (ADR-0008): the stored setting of an app that has a row, else
+    /// whether tracking it would turn it on (`watched_by_default`). It applies only while the app
+    /// is Productive, and never to a browser.
+    pub watch: bool,
 }
 
 /// What the tracker is doing as of its last tick (`get_status`), for the Day view's status line
@@ -200,6 +205,9 @@ pub struct NowTracking {
     /// The time goes to this app as waiting credit (ADR-0007): it is minimized while the
     /// foreground isn't Productive. Always false for sites.
     pub waiting: bool,
+    /// It counts only because it is a watched app in front (ADR-0008): there has been no input or
+    /// sound for longer than "Count as away after", but for less than 30 minutes.
+    pub watching: bool,
 }
 
 /// The only error type that crosses IPC. With `ErrorHandlingMode::Throw` the TS promise rejects with it.

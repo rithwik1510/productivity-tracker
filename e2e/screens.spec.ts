@@ -70,6 +70,10 @@ test("apps and sites", async ({ page }) => {
   await page.getByRole("button", { name: /^twitch\.tv,/ }).click();
   await expect(page.getByRole("textbox", { name: "Title keyword for twitch.tv" })).toBeVisible();
   await shot(page, "apps-site-popover");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /^Claude,/ }).click();
+  await expect(page.getByRole("switch", { name: "Counts while I watch" })).toBeVisible();
+  await shot(page, "apps-popover-watch");
 
   await open(page, "?fixture=longNames");
   await page.getByRole("button", { name: "Apps", exact: true }).click();
@@ -151,6 +155,9 @@ test("day status line states", async ({ page }) => {
   await open(page, "?waiting=1");
   await expect(page.getByText("Tracking · Claude · waiting")).toBeVisible();
   await shot(page, "day-status-waiting");
+  await open(page, "?watching=1");
+  await expect(page.getByText("Tracking · Claude · watching")).toBeVisible();
+  await shot(page, "day-status-watching");
 });
 
 test("minimum window size", async ({ page }) => {

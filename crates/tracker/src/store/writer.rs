@@ -3,7 +3,9 @@
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use tracker_api::{AppIdentity, Appearance, Category, Site, TargetRef, normalize_domain};
+use tracker_api::{
+    AppIdentity, Appearance, Category, Site, TargetRef, normalize_domain, watched_by_default,
+};
 
 use super::{
     SqlAppearance, SqlCategory, StoreError, connect_writer, identity_columns, identity_from_columns,
@@ -67,9 +69,9 @@ impl Writer {
 
     /// Tracked apps and sites as the engine needs them.
     pub(crate) fn targets(&self) -> Result<Targets, StoreError> {
-        let mut apps = self
-            .conn
-            .prepare("SELECT id, kind, key, name, category FROM app WHERE category IS NOT NULL")?;
+        let mut apps = self.conn.prepare(
+            "SELECT id, kind, key, name, category, watch FROM app WHERE category IS NOT NULL",
+        )?;
         let apps = apps
             .query_map([], |row| {
                 let kind: String = row.get(1)?;
@@ -79,6 +81,7 @@ impl Writer {
                     id: row.get(0)?,
                     name: row.get(3)?,
                     category,
+                    watch: row.get(5)?,
                 };
                 Ok((identity, app))
             })?
@@ -224,7 +227,9 @@ impl Writer {
         Ok(())
     }
 
-    /// `category: None` stops tracking; the row stays so history keeps the name.
+    /// `category: None` stops tracking; the row stays so history keeps the name, and so does its
+    /// watch setting. An app's first row starts watched if it is a preset agent app
+    /// (`watched_by_default`).
     pub(crate) fn set_app_category(
         &self,
         identity: &AppIdentity,
@@ -233,10 +238,35 @@ impl Writer {
     ) -> Result<(), StoreError> {
         let (kind, key) = identity_columns(identity);
         self.conn.execute(
-            "INSERT INTO app (kind, key, name, category) VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO app (kind, key, name, category, watch) VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (kind, key) DO UPDATE SET name = excluded.name, category = excluded.category",
-            params![kind, key, name, category.map(SqlCategory)],
+            params![
+                kind,
+                key,
+                name,
+                category.map(SqlCategory),
+                watched_by_default(identity)
+            ],
         )?;
+        Ok(())
+    }
+
+    /// "Counts while I watch" (ADR-0008). Only an app with a row (tracked now or before) has one.
+    pub(crate) fn set_app_watch(
+        &self,
+        identity: &AppIdentity,
+        watch: bool,
+    ) -> Result<(), StoreError> {
+        let (kind, key) = identity_columns(identity);
+        let changed = self.conn.execute(
+            "UPDATE app SET watch = ?3 WHERE kind = ?1 AND key = ?2",
+            params![kind, key, watch],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::Invalid(
+                "Track this app first, then choose whether it counts while you watch.".into(),
+            ));
+        }
         Ok(())
     }
 

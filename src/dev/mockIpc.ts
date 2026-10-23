@@ -5,6 +5,7 @@
 //   ?appearance=solid     starts with the Solid appearance setting (default glass)
 //   ?paused=1             starts paused from the tray, until 3:40 PM
 //   ?waiting=1            get_status reports its app as waiting in (minimized, ADR-0007)
+//   ?watching=1           get_status reports its app as counting only by its watch (ADR-0008)
 //   ?status=saveFailed|away|awayBrief|untracked  get_status reports that state instead of
 //                         tracking (a pause still wins over all but saveFailed, as in the backend)
 //   ?fail=<command>       makes that command throw, to exercise optimistic rollbacks
@@ -47,6 +48,8 @@ type FixtureApp = {
   browser?: boolean;
   /** false = no extracted icon, so the UI shows a monogram */
   icon?: boolean;
+  /** "Counts while I watch" (ADR-0008); off unless set */
+  watch?: boolean;
 };
 
 // Open on this PC "now", as list_catalog reports it; everything else is merely installed.
@@ -54,6 +57,7 @@ const RUNNING = new Set([
   "Visual Studio Code",
   "Claude",
   "Google Chrome",
+  "Helium",
   "Figma",
   "Discord",
   "Spotify",
@@ -86,6 +90,8 @@ const aumid = (key: string): AppIdentity => ({ kind: "aumid", key });
 
 const UNTRACKED: FixtureApp[] = [
   { name: "Google Chrome", identity: exe("chrome.exe"), browser: true },
+  // A Chromium fork that ships chrome.exe: its own app, keyed by its ProductName.
+  { name: "Helium", identity: exe("chrome.exe|helium"), browser: true },
   { name: "Microsoft Edge", identity: exe("msedge.exe"), browser: true },
   { name: "Discord", identity: exe("discord.exe") },
   { name: "OBS Studio", identity: exe("obs64.exe") },
@@ -103,7 +109,8 @@ const UNTRACKED: FixtureApp[] = [
 
 const TRACKED: FixtureApp[] = [
   { name: "Visual Studio Code", identity: exe("code.exe"), category: "productive" },
-  { name: "Claude", identity: exe("claude.exe"), category: "productive" },
+  // An agent app the owner watches work: it keeps counting in front without input.
+  { name: "Claude", identity: exe("claude.exe"), category: "productive", watch: true },
   {
     name: "Windows Terminal",
     identity: aumid("Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"),
@@ -331,6 +338,7 @@ const apps: MockApp[] = fixture.apps.map((a, i) => ({
   isBrowser: a.browser ?? false,
   isRunning: RUNNING.has(a.name),
   category: a.category ?? null,
+  watch: a.watch ?? false,
 }));
 const sites: Site[] = fixture.sites.map((s, i) => ({ id: i + 1, ...s }));
 const settings: Settings = {
@@ -560,6 +568,16 @@ function upsertSite(domain: string, keyword: string | null, category: Category |
   return { ...site };
 }
 
+/** The UI offers it only for tracked apps; the backend refuses an app it has no row for. */
+function setAppWatch(identity: AppIdentity, watch: boolean) {
+  const app = apps.find(
+    (a) => a.identity.kind === identity.kind && a.identity.key === identity.key,
+  );
+  if (!app) throw apiError("Track this app first.");
+  app.watch = watch;
+  return null;
+}
+
 function setAppCategory(identity: AppIdentity, name: string, category: Category | null) {
   const app = apps.find(
     (a) => a.identity.kind === identity.kind && a.identity.key === identity.key,
@@ -574,6 +592,7 @@ function setAppCategory(identity: AppIdentity, name: string, category: Category 
       isBrowser: false,
       isRunning: false,
       category,
+      watch: false,
     });
   // Today's 0s rows depend on what is tracked now.
   recorded.delete(TODAY);
@@ -582,15 +601,23 @@ function setAppCategory(identity: AppIdentity, name: string, category: Category 
 
 /**
  * The tracker is counting the fixture's first item of today, while it is still tracked. With
- * ?waiting=1 it is the first app that waited in today instead (Claude), counting as waiting credit.
+ * ?waiting=1 it is the first app that waited in today instead (Claude), counting as waiting credit;
+ * with ?watching=1 the first watched app (Claude), held by its watch.
  */
 function tracking(): NowTracking | null {
   const waiting = params.get("waiting") === "1";
-  const name = (waiting ? fixture.today.find(([, , , w]) => w) : fixture.today[0])?.[0];
+  const watching = params.get("watching") === "1";
+  const name = (
+    waiting
+      ? fixture.today.find(([, , , w]) => w)
+      : watching
+        ? fixture.today.find(([n]) => apps.some((a) => a.name === n && a.watch))
+        : fixture.today[0]
+  )?.[0];
   const app = apps.find((x) => x.name === name);
   if (app?.category) {
     const { name, iconPath, category, isBrowser } = app;
-    return { name, iconPath, category, isBrowser, waiting };
+    return { name, iconPath, category, isBrowser, waiting, watching };
   }
   const site = sites.find((x) => x.domain === name);
   if (site?.category) {
@@ -600,6 +627,7 @@ function tracking(): NowTracking | null {
       category: site.category,
       isBrowser: false,
       waiting: false,
+      watching: false,
     };
   }
   return null;
@@ -621,7 +649,10 @@ function getStatus(): TrackerStatus {
 function deleteAllData() {
   wiped = true;
   recorded.clear();
-  for (const app of apps) app.category = null;
+  for (const app of apps) {
+    app.category = null;
+    app.watch = false;
+  }
   sites.length = 0;
   pausedUntil = null;
   Object.assign(settings, {
@@ -680,6 +711,8 @@ async function handle(cmd: string, a: Args): Promise<unknown> {
       return apps.map(({ id: _, ...app }) => app) satisfies CatalogApp[];
     case "set_app_category":
       return setAppCategory(identity(a.identity), str(a.name) ?? "", category(a.category));
+    case "set_app_watch":
+      return setAppWatch(identity(a.identity), a.watch === true);
     case "list_sites":
       return [...sites].sort((x, y) => x.domain.localeCompare(y.domain)) satisfies Site[];
     case "upsert_site":
@@ -733,7 +766,7 @@ async function handle(cmd: string, a: Args): Promise<unknown> {
     case "delete_all_data":
       return deleteAllData();
     case "plugin:app|version":
-      return "0.1.0";
+      return "0.1.1";
     case "plugin:window|destroy":
       // The real window is gone; leave an empty canvas.
       document.body.replaceChildren();

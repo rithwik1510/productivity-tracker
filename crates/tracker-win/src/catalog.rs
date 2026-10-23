@@ -1,19 +1,19 @@
 //! Installed (`shell:AppsFolder`) and running apps, with icons (plan section 5 "Catalog").
 //!
 //! Every entry gets the same identity key the sampler would report for it (ADR-0003): packaged
-//! apps by AUMID, everything else by the lowercase exe file name of the shortcut's target.
+//! apps by AUMID, everything else by the lowercase exe file name of the shortcut's target (plus the
+//! ProductName for a Chromium fork's `chrome.exe`, `tracker_api::exe_identity`).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
-use tracker_api::{AppIdentity, CatalogApp, ICONS_DIR_NAME, is_browser};
+use tracker_api::{
+    AppIdentity, CatalogApp, ICONS_DIR_NAME, exe_identity, is_browser, watched_by_default,
+};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::Storage::EnhancedStorage::{PKEY_Link_Arguments, PKEY_Link_TargetParsingPath};
-use windows::Win32::Storage::FileSystem::{
-    GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
-};
 use windows::Win32::System::Com::{
     COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoFreeUnusedLibrariesEx, CoTaskMemFree,
 };
@@ -25,7 +25,7 @@ use windows::Win32::UI::Shell::{
 use windows::core::{GUID, HSTRING, Interface, PWSTR};
 
 use crate::com::Apartment;
-use crate::{foreground, icons, process};
+use crate::{foreground, icons, process, version};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -156,6 +156,7 @@ fn collect(data_dir: &Path) -> Result<Listing, CatalogError> {
                 icon_path,
                 is_browser: is_browser(&entry.identity),
                 is_running: running_ids.contains(&entry.identity),
+                watch: watched_by_default(&entry.identity),
                 identity: entry.identity,
                 name: entry.name,
                 category: None,
@@ -203,7 +204,8 @@ fn classify(item: IShellItem) -> Result<Option<Entry>, CatalogError> {
         }));
     }
     // Win32: the shortcut's target exe. Any explicit AUMID on the shortcut (Chrome sets one) is
-    // ignored, because the sampler identifies the running process by exe name.
+    // ignored, because the sampler identifies the running process by exe name (and a fork of
+    // Chrome by its ProductName too, read from the target here).
     let target = string_property(&props, &PKEY_Link_TargetParsingPath);
     let mut exe = if target.is_empty() {
         // Known-folder entries like `{GUID}\cmd.exe` have no shortcut target.
@@ -232,11 +234,13 @@ fn classify(item: IShellItem) -> Result<Option<Entry>, CatalogError> {
     }
     let name = match rank {
         // "Install Additional Tools for Node.js" shouldn't become the name of cmd.exe.
-        Rank::ShortcutWithArguments => file_description(Path::new(&target)).unwrap_or(name),
+        Rank::ShortcutWithArguments => {
+            version::string(Path::new(&target), "FileDescription").unwrap_or(name)
+        }
         _ => name,
     };
     Ok(Some(Entry {
-        identity: AppIdentity::Exe { key: exe },
+        identity: exe_identity(&exe, || process::product_name(Path::new(&target))),
         name,
         icon: Some(item),
         rank,
@@ -284,11 +288,15 @@ fn running() -> Vec<Entry> {
         let image = process::image_path(pid);
         let (name, icon) = match &identity {
             AppIdentity::Aumid { key } => (
-                image.as_deref().and_then(file_description),
+                image
+                    .as_deref()
+                    .and_then(|path| version::string(path, "FileDescription")),
                 shell_item(&format!("shell:AppsFolder\\{key}")),
             ),
             AppIdentity::Exe { .. } => (
-                image.as_deref().and_then(file_description),
+                image
+                    .as_deref()
+                    .and_then(|path| version::string(path, "FileDescription")),
                 image
                     .as_deref()
                     .and_then(|path| shell_item(&path.to_string_lossy())),
@@ -342,48 +350,4 @@ fn take_co_string(raw: PWSTR) -> String {
         CoTaskMemFree(Some(raw.0.cast_const().cast()));
         text
     }
-}
-
-/// The exe's `FileDescription` version resource (what Task Manager shows), if any.
-fn file_description(path: &Path) -> Option<String> {
-    let path = HSTRING::from(path);
-    // SAFETY: plain FFI call with a valid path string.
-    let size = unsafe { GetFileVersionInfoSizeW(&path, None) };
-    if size == 0 {
-        return None;
-    }
-    let mut data = vec![0u8; size as usize];
-    // SAFETY: `data` is exactly `size` bytes, as the API was told.
-    unsafe { GetFileVersionInfoW(&path, None, size, data.as_mut_ptr().cast()) }.ok()?;
-    // The first language/codepage pair names the string table to read.
-    let translation = query_version_value(&data, &HSTRING::from(r"\VarFileInfo\Translation"))?;
-    let [lang, codepage, ..] = translation[..] else {
-        return None;
-    };
-    let key = format!(r"\StringFileInfo\{lang:04x}{codepage:04x}\FileDescription");
-    let text = query_version_value(&data, &HSTRING::from(key))?;
-    let description = String::from_utf16_lossy(&text);
-    let description = description.trim_end_matches('\0').trim();
-    (!description.is_empty()).then(|| description.to_owned())
-}
-
-/// A version-resource value as UTF-16 units (for `Translation`, pairs of u16 lang/codepage).
-fn query_version_value(data: &[u8], sub_block: &HSTRING) -> Option<Vec<u16>> {
-    let mut value = std::ptr::null_mut();
-    let mut len = 0u32;
-    // SAFETY: `data` is a complete version-info block from GetFileVersionInfoW; on success the
-    // API points `value` into it, with `len` in u16 units for strings and bytes for binary data.
-    let found = unsafe { VerQueryValueW(data.as_ptr().cast(), sub_block, &mut value, &mut len) };
-    if !found.as_bool() || value.is_null() || len == 0 {
-        return None;
-    }
-    let is_binary = sub_block.to_string_lossy().starts_with(r"\VarFileInfo");
-    let units = if is_binary {
-        len as usize / 2
-    } else {
-        len as usize
-    };
-    // SAFETY: `value` points to `units` u16s inside `data`, per the API contract above; the
-    // version block is 2-byte aligned.
-    Some(unsafe { std::slice::from_raw_parts(value.cast::<u16>(), units) }.to_vec())
 }

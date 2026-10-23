@@ -2,10 +2,11 @@
 Tracker", "ProductivityTracker" and "productivity-tracker". The user-facing places are this file,
 LICENSE, productName and identifier in src-tauri/tauri.conf.json, APP_DIR_NAME in
 crates/tracker-api/src/lib.rs (the data folder; changing it orphans existing data), index.html,
-src/components/{TitleBar,Rail}.tsx, the startup error dialog in src-tauri/src/lib.rs, and the export
-file name in src-tauri/src/commands.rs. -->
+src/components/{TitleBar,Rail}.tsx, the startup error dialog in src-tauri/src/lib.rs, the export
+file name in src-tauri/src/commands.rs, and the <title> of the logo SVGs in src-tauri/icons/source
+(then `bun run icons`). -->
 
-# Productivity Tracker
+# <img src="docs/logo.svg" width="36" height="36" alt="" align="top"> Productivity Tracker
 
 An automatic time tracker for Windows that only counts what you opt in to. You pick which apps and sites are Productive and which are Entertainment. Nothing else is tracked, and nothing leaves your PC.
 
@@ -28,7 +29,7 @@ The screenshots use mock data.
 Once a second the tracker decides whether that second counts, and for what. Every second counts once, for at most one thing, in this order:
 
 1. A Productive app or site in front.
-2. Otherwise, a Productive app you minimized in the last 30 minutes, so an agent or a render you're waiting on still counts. This needs Settings → "Keep counting minimized apps", which is off by default for new installs.
+2. Otherwise, a Productive app you minimized in the last 30 minutes, so an agent or a render you're waiting on still counts. Browsers never do, since a minimized browser is usually a video or music. This needs Settings → "Keep counting minimized apps", which is off by default for new installs.
 3. Otherwise, whatever is in front, if you track it.
 
 An app or site you haven't picked counts for nothing. A tracked site always beats its browser. If you track the browser too, other sites count as the browser's category.
@@ -36,6 +37,7 @@ An app or site you haven't picked counts for nothing. A tracked site always beat
 You have to be there for time to count:
 
 - After a stretch with no keyboard, mouse or sound from the app in front, you're away, and the time back to your last activity is removed. The stretch is 5 minutes by default, and Settings offers 2, 5, 10 or 15. A 40-minute video you watch without touching anything still counts in full, because its sound shows you're there.
+- An AI agent or a render you watch work in front, without touching anything, can keep counting too. Turn on "Counts while I watch" in the app's popover in Apps & sites; it's offered for Productive apps that aren't browsers, and it's on by default for the Claude, ChatGPT/Codex and T3 Code desktop apps. While that app is in front, you stay active for up to 30 minutes after your last input or sound. After 30 minutes you're away, and only the time past those 30 minutes is removed. Today's status line reads "Tracking · T3 Code · watching" meanwhile. If you walk away from a watched app, it can count up to 30 minutes you weren't there for, so lock the PC (Win+L) when you leave.
 - Sound alone keeps you active for at most 2 hours. After that, time trims back to your last real input, so a film left playing to an empty room counts nothing.
 - Screen lock, sleep, display off and a disconnected session never count.
 - Xbox-style game controllers count as input.
@@ -50,7 +52,7 @@ Changing an app's category changes future time only. Past days keep the category
 
 Windows 10 or 11, 64-bit.
 
-1. Download `ProductivityTracker_0.1.0_x64-setup.exe` from the [latest release](https://github.com/rithwik1510/productivity-tracker/releases/latest).
+1. Download the `ProductivityTracker_<version>_x64-setup.exe` installer from the [latest release](https://github.com/rithwik1510/productivity-tracker/releases/latest).
 2. Run it. It installs for your user only and doesn't need admin rights.
 3. The installer isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**. Signed builds are planned.
 
@@ -64,9 +66,9 @@ Everything stays on your PC. There's no account, no telemetry, no crash reportin
 
 ### What it reads while running
 
-- Which window is in front and which program owns it, by exe file name such as `discord.exe`, or by AppUserModelID for Store apps.
+- Which window is in front and which program owns it, by exe file name such as `discord.exe`, or by AppUserModelID for Store apps. For a `chrome.exe`, also the product name in its file properties, to tell Helium or Chromium from Google Chrome.
 - The title of that window. It stays in memory and is only matched against the title keywords of sites you track. Titles are never written to disk.
-- In Chrome, Edge, Brave, Thorium and Comet, the address bar text, through Windows UI Automation. The tracker keeps only the host name, such as `youtube.com`, and drops the rest of the address right away. It reads the browser's toolbar and never the page. The same read tells a private window from a normal one.
+- In Chrome and its forks, Edge, Brave, Thorium and Comet, the address bar text, through Windows UI Automation. The tracker keeps only the host name, such as `youtube.com`, and drops the rest of the address right away. It reads the browser's toolbar and never the page. The same read tells a private window from a normal one.
 - Whether the app in front is making sound, from the peak level of each audio session. This is only a sign that you're there. No audio is recorded.
 - How long ago the last keyboard, mouse or controller input happened. Not which keys, and not where the mouse is.
 - Lock, unlock, sleep, display-off and session-disconnect events.
@@ -78,7 +80,7 @@ Everything stays on your PC. There's no account, no telemetry, no crash reportin
 All of it lives in `%LOCALAPPDATA%\ProductivityTracker`:
 
 - `tracker.db`, a SQLite database with:
-  - the apps you've tracked: exe name or AppUserModelID, display name, category;
+  - the apps you've tracked: exe name or AppUserModelID, display name, category, and whether it counts while you watch;
   - the sites you've added: domain, title keyword, category;
   - time intervals: start, end, which tracked app or site, its category then, and whether it was minimized-app time;
   - your settings.
@@ -105,7 +107,7 @@ To see exactly what the tracker reads each second, run the probe CLI from source
 
 | Browser | How the site is read |
 |---|---|
-| Google Chrome (also Chromium, ungoogled-chromium, Supermium), Microsoft Edge, Brave, Thorium, Comet | Address bar, falling back to the window title |
+| Google Chrome, Chromium forks that ship as `chrome.exe` (Helium, Chromium, ungoogled-chromium, Supermium), Microsoft Edge, Brave, Thorium, Comet | Address bar, falling back to the window title |
 | Vivaldi, Opera | Window title only |
 | Firefox, Zen, LibreWolf, Waterfox, Floorp | Window title only |
 
@@ -124,7 +126,8 @@ Window-title matching uses each site's title keyword, which defaults to the doma
 - In fullscreen, a browser hides its address bar, so the tracker falls back to the title there too.
 - Only the window in front counts. A video playing on a second monitor doesn't count unless its window is the one in front.
 - Each game is its own app. Tracking Steam or another launcher doesn't cover the games it starts, so pick the games themselves.
-- Programs that share one runtime exe, such as `javaw.exe` or `python.exe`, count as one app. Chromium forks that ship as `chrome.exe` count as Chrome.
+- Programs that share one runtime exe, such as `javaw.exe` or `python.exe`, count as one app.
+- Chromium forks that ship as `chrome.exe`, such as Helium, are apps of their own, told apart by the product name in the exe's file properties. Time a fork recorded before the tracker told them apart stays under Google Chrome.
 - The same app installed from the Store and from a normal installer counts as two apps.
 - Minimized-app time needs the window minimized to the taskbar. Apps that hide to the tray, windows behind others, and windows on another virtual desktop don't get it.
 - Only Xbox-style (XInput) controllers count as input. A PlayStation pad counts only through Steam Input.
@@ -172,6 +175,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p tracker                           # tracking scenarios
 bun run bindings                                # regenerate TypeScript bindings after changing commands
+bun run icons                                   # regenerate every app and tray icon from src-tauri/icons/source
 ```
 
 The code is a thin Tauri v2 shell in `src-tauri/` around three Rust crates:

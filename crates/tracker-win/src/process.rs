@@ -1,9 +1,10 @@
 //! Process identity (ADR-0003) and the parent-PID snapshot used for audio descendants.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex, PoisonError};
 
-use tracker_api::AppIdentity;
+use tracker_api::{AppIdentity, exe_identity};
 use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
 use windows::Win32::Storage::Packaging::Appx::{
     APPLICATION_USER_MODEL_ID_MAX_LENGTH, GetApplicationUserModelId,
@@ -63,16 +64,29 @@ impl Drop for Process {
     }
 }
 
-/// AUMID if packaged, else the lowercase exe file name. `None` if the process is gone or
-/// inaccessible.
+/// AUMID if packaged, else the lowercase exe file name (with a Chromium fork's ProductName,
+/// `exe_identity`). `None` if the process is gone or inaccessible.
 pub(crate) fn identity(pid: u32) -> Option<AppIdentity> {
     let process = Process::open(pid)?;
     if let Some(key) = process.aumid() {
         return Some(AppIdentity::Aumid { key });
     }
     let path = process.image_path()?;
-    let key = path.file_name()?.to_string_lossy().to_lowercase();
-    Some(AppIdentity::Exe { key })
+    let file_name = path.file_name()?.to_string_lossy();
+    Some(exe_identity(&file_name, || product_name(&path)))
+}
+
+/// The exe's version-info ProductName, read once per path: `identity` runs every tick for the
+/// foreground and each minimized window. Only `chrome.exe` paths are ever asked, so the map stays
+/// a handful of entries.
+pub(crate) fn product_name(path: &Path) -> Option<String> {
+    static NAMES: LazyLock<Mutex<HashMap<PathBuf, Option<String>>>> = LazyLock::new(Mutex::default);
+    NAMES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(path.to_owned())
+        .or_insert_with(|| crate::version::string(path, "ProductName"))
+        .clone()
 }
 
 pub(crate) fn image_path(pid: u32) -> Option<PathBuf> {

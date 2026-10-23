@@ -23,6 +23,7 @@ On each Active tick the engine picks one target, in this order:
 - **Several minimized apps** with clock left: the one with the most left (the most recent minimize) waits in. A tie goes to the lowest app id. One app per second.
 - **Presence is unchanged.** Away trims everything. A minimized app's sound isn't evidence. Foreground sound is, so a minimized agent can cover a sound-only YouTube video, up to its clock. Accepted.
 - **Apps only**, as in 0006. Entertainment and untracked apps never wait in; sites never do. Private windows aren't listed as minimized.
+- **Browsers never wait in** (amendment, 2026-10-23, issue 18). Until then a minimized browser that was a Productive Tracked App waited in as itself. The owner's data showed what that meant in practice: YouTube or music left playing in a minimized browser counted as Productive "waiting". A minimized browser is almost always that, not work being waited on, so any app with `is_browser` (Chromium forks included) is skipped by step 2.
 - **Stored** as ordinary rows with the existing `minimized` flag (schema v4). The flag is part of the row's key, so "Claude waiting" and "Claude in front" are separate rows. A Category change closes the row (ADR-0005).
 - At most one row is open at a time, and nothing is rewritten after the fact.
 

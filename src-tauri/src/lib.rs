@@ -36,6 +36,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::get_year,
             commands::list_catalog,
             commands::set_app_category,
+            commands::set_app_watch,
             commands::list_sites,
             commands::upsert_site,
             commands::get_settings,
@@ -118,6 +119,8 @@ fn setup(app: &mut App) -> Result<(), Box<dyn Error>> {
     let onboarded = state.read(|r| r.settings())?.onboarded;
     app.manage(state);
     tray::build(app)?;
+    let handle = app.handle().clone();
+    watcher.set_theme_hook(Box::new(move || tray::update_icon(&handle)));
 
     // FirstRun must be reachable, so a login start before onboarding still shows the window.
     if !onboarded || !std::env::args().any(|arg| arg == AUTOSTART_ARG) {

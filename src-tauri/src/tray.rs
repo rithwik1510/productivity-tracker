@@ -1,20 +1,21 @@
 //! The tray icon: the app's only presence while the window is closed (plan section 6). It also
 //! owns Pause, which lives only here and in the Day view's live line.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
+use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Emitter, Manager, Wry};
+use tauri::{App, AppHandle, Emitter, Manager, Wry, include_image};
 use tracker::days::next_day_start;
 use tracker_api::{ApiError, Control, TrackerStatus};
 
 use crate::state::AppState;
-use crate::window;
+use crate::{glass, window};
 
 const TRAY: &str = "main";
 const OPEN: &str = "open";
@@ -31,11 +32,32 @@ const PAUSE_CHANGED: &str = "pause-changed";
 /// on every refresh would disturb a menu the user has open.
 static MENU_PAUSED: AtomicBool = AtomicBool::new(false);
 
+/// The mono mark at Windows' small-icon size for 100, 125, 150 and 200 % scale, drawn per size by
+/// `bun run icons` so Windows never has to scale it. White for a dark taskbar, black for a light one.
+const ICON_SIZES: [u32; 4] = [16, 20, 24, 32];
+const WHITE: [Image<'static>; 4] = [
+    include_image!("icons/tray/white-16.png"),
+    include_image!("icons/tray/white-20.png"),
+    include_image!("icons/tray/white-24.png"),
+    include_image!("icons/tray/white-32.png"),
+];
+const BLACK: [Image<'static>; 4] = [
+    include_image!("icons/tray/black-16.png"),
+    include_image!("icons/tray/black-20.png"),
+    include_image!("icons/tray/black-24.png"),
+    include_image!("icons/tray/black-32.png"),
+];
+/// The icon on the tray, as `icon_key`, so it is replaced only when the theme or scale changed.
+static ICON_SHOWN: AtomicUsize = AtomicUsize::new(usize::MAX);
+
 /// Needs `AppState` managed: the tooltip and menu read through its shared reader.
 pub fn build(app: &App) -> tauri::Result<()> {
     let paused = paused_until(&app.state());
     MENU_PAUSED.store(paused.is_some(), Ordering::Relaxed);
-    let mut builder = TrayIconBuilder::with_id(TRAY)
+    let key = icon_key(app.handle());
+    ICON_SHOWN.store(key, Ordering::Relaxed);
+    TrayIconBuilder::with_id(TRAY)
+        .icon(icon(key))
         .tooltip(tooltip(&app.state(), paused))
         .menu(&menu(app.handle(), paused.is_some())?)
         // Left-click opens the window; the menu is on right-click.
@@ -61,11 +83,8 @@ pub fn build(app: &App) -> tauri::Result<()> {
             {
                 window::open(tray.app_handle());
             }
-        });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
-    }
-    builder.build(app)?;
+        })
+        .build(app)?;
 
     let app = app.handle().clone();
     thread::Builder::new()
@@ -116,9 +135,55 @@ pub fn set_pause(app: &AppHandle, until_ms: Option<i64>) -> Result<(), ApiError>
     Ok(())
 }
 
-/// Re-reads today's total and the pause into the tooltip, and rebuilds the menu when Resume has to
-/// appear or go.
+/// Swaps the icon when the taskbar's theme or the primary monitor's scale changed. The session
+/// watcher calls it on the theme broadcast; `refresh` calls it too, which catches a scale change
+/// within `TOOLTIP_REFRESH`.
+pub fn update_icon(app: &AppHandle) {
+    let key = icon_key(app);
+    if ICON_SHOWN.swap(key, Ordering::Relaxed) == key {
+        return;
+    }
+    if let Some(tray) = app.tray_by_id(TRAY)
+        && let Err(e) = tray.set_icon(Some(icon(key)))
+    {
+        tracing::warn!("couldn't update the tray icon: {e}");
+    }
+}
+
+/// Which icon fits now: the index into `ICON_SIZES`, plus 4 for a light taskbar. The taskbar has
+/// its own theme setting (`SystemUsesLightTheme`, not the apps' one); missing means dark, the
+/// Windows 11 default. The tray sits on the primary monitor, so its scale picks the size.
+fn icon_key(app: &AppHandle) -> usize {
+    let light = windows_registry::CURRENT_USER
+        .open(glass::PERSONALIZE)
+        .and_then(|key| key.get_u32("SystemUsesLightTheme"))
+        == Ok(1);
+    let scale = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map_or(1.0, |monitor| monitor.scale_factor());
+    // The smallest drawn size that covers it, so 175 % (28 px) gets 32 scaled down, not 24 up.
+    let size = ICON_SIZES
+        .iter()
+        .position(|&px| f64::from(px) >= 16.0 * scale)
+        .unwrap_or(ICON_SIZES.len() - 1);
+    size + if light { ICON_SIZES.len() } else { 0 }
+}
+
+fn icon(key: usize) -> Image<'static> {
+    let set = if key >= ICON_SIZES.len() {
+        &BLACK
+    } else {
+        &WHITE
+    };
+    set[key % ICON_SIZES.len()].clone()
+}
+
+/// Re-reads today's total and the pause into the tooltip, rebuilds the menu when Resume has to
+/// appear or go, and re-checks the icon.
 pub fn refresh(app: &AppHandle) {
+    update_icon(app);
     let Some(tray) = app.tray_by_id(TRAY) else {
         return;
     };

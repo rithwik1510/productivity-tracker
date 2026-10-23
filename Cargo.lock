@@ -2911,7 +2911,7 @@ dependencies = [
 
 [[package]]
 name = "productivity-tracker"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "jiff",
  "specta",
@@ -4472,7 +4472,7 @@ dependencies = [
 
 [[package]]
 name = "tracker"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "jiff",
  "rusqlite",
@@ -4485,7 +4485,7 @@ dependencies = [
 
 [[package]]
 name = "tracker-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "specta",
@@ -4495,7 +4495,7 @@ dependencies = [
 
 [[package]]
 name = "tracker-win"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",

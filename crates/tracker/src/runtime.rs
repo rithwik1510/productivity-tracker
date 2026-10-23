@@ -92,6 +92,17 @@ impl Tracker {
                     .and_then(|()| self.reload_targets());
                 let _ = reply.send(result.map_err(ApiError::from));
             }
+            Control::SetAppWatch {
+                identity,
+                watch,
+                reply,
+            } => {
+                let result = self
+                    .writer
+                    .set_app_watch(&identity, watch)
+                    .and_then(|()| self.reload_targets());
+                let _ = reply.send(result.map_err(ApiError::from));
+            }
             Control::UpsertSite {
                 domain,
                 keyword,
@@ -149,7 +160,8 @@ impl Tracker {
     }
 
     /// What the tracker is doing as of the last tick (`get_status`), in `TrackerStatus`'s order.
-    /// While an app waits in (ADR-0007) it is the one tracked, flagged `waiting`.
+    /// While an app waits in (ADR-0007) it is the one tracked, flagged `waiting`; a watched app
+    /// held only by its watch (ADR-0008) is flagged `watching`.
     pub fn status(&self) -> TrackerStatus {
         if self.save_failed {
             return TrackerStatus::SaveFailed;
@@ -175,6 +187,7 @@ impl Tracker {
                 category: key.category,
                 is_browser: is_browser(identity),
                 waiting: key.minimized,
+                watching: self.engine.watching(),
             },
             Counted::Site(site) => NowTracking {
                 name: site.domain.clone(),
@@ -182,6 +195,7 @@ impl Tracker {
                 category: key.category,
                 is_browser: false,
                 waiting: false,
+                watching: false,
             },
         })
     }

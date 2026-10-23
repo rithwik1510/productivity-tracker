@@ -14,6 +14,12 @@ pub enum Control {
         category: Option<Category>,
         reply: Sender<Result<(), ApiError>>,
     },
+    /// "Counts while I watch" (ADR-0008) for an app that has a row (one that is or was tracked).
+    SetAppWatch {
+        identity: AppIdentity,
+        watch: bool,
+        reply: Sender<Result<(), ApiError>>,
+    },
     UpsertSite {
         domain: String,
         keyword: Option<String>,

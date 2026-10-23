@@ -44,6 +44,8 @@ struct ExportApp {
     identity: AppIdentity,
     name: String,
     category: Option<Category>,
+    /// "Counts while I watch" (ADR-0008).
+    watch: bool,
 }
 
 /// One stored row as is: RFC 3339 times with the local offset, exact to the millisecond.
@@ -116,7 +118,7 @@ impl Reader {
         let settings = self.settings()?;
         let mut apps = self
             .conn
-            .prepare("SELECT id, kind, key, name, category FROM app ORDER BY id")?;
+            .prepare("SELECT id, kind, key, name, category, watch FROM app ORDER BY id")?;
         let apps = apps
             .query_map([], |row| {
                 let kind: String = row.get(1)?;
@@ -125,6 +127,7 @@ impl Reader {
                     identity: identity_from_columns(&kind, row.get(2)?)?,
                     name: row.get(3)?,
                     category: row.get::<_, Option<SqlCategory>>(4)?.map(|c| c.0),
+                    watch: row.get(5)?,
                 })
             })?
             .collect::<Result<_, _>>()?;

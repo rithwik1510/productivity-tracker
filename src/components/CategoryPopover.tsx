@@ -1,12 +1,13 @@
 import { motion } from "motion/react";
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Category } from "../api/bindings";
-import { useUpsertSite } from "../api/queries";
+import type { CatalogApp, Category } from "../api/bindings";
+import { useSetAppWatch, useUpsertSite } from "../api/queries";
 import type { Target } from "../api/targets";
 import { useMotionTokens } from "../lib/motion";
 import { AppIcon } from "./AppIcon";
 import { INPUT } from "./buttons";
 import { CategoryControl } from "./CategoryControl";
+import { Switch } from "./Switch";
 
 const WIDTH = 312;
 const GAP = 6;
@@ -25,10 +26,11 @@ type Props = {
 };
 
 /**
- * Apps & sites: one tile's category (the Off · Productive · Entertainment control) and, for a
- * site, its title keyword. Anchored under the tile, flipped above it near the bottom; it scrolls
- * with the tiles. Picking an app's category closes it (a site stays open for its keyword); so do
- * Escape and a press outside.
+ * Apps & sites: one tile's category (the Off · Productive · Entertainment control), for a
+ * Productive app that isn't a browser its "Counts while I watch" switch, and for a site its title
+ * keyword. Anchored under the tile, flipped above it near the bottom; it scrolls with the tiles.
+ * Picking an app's category closes it (a site stays open for its keyword); so do Escape and a
+ * press outside.
  */
 export function CategoryPopover({
   target,
@@ -129,6 +131,9 @@ export function CategoryPopover({
           if (target.kind === "app") close();
         }}
       />
+      {target.kind === "app" && target.category === "productive" && !target.app.isBrowser && (
+        <WatchSwitch app={target.app} />
+      )}
       {target.kind === "site" && (
         <KeywordField
           key={target.key}
@@ -139,6 +144,36 @@ export function CategoryPopover({
         />
       )}
     </motion.div>
+  );
+}
+
+/**
+ * "Counts while I watch" (ADR-0008), for a Productive app that isn't a browser. A refusal flips
+ * the switch back and says why.
+ */
+function WatchSwitch({ app }: { app: CatalogApp }) {
+  const setWatch = useSetAppWatch();
+  return (
+    <div className="mt-3 flex items-start gap-3">
+      <p className="min-w-0 flex-1 text-meta leading-[1.4]">
+        <span className="block font-medium text-fg-1">Counts while I watch</span>
+        {setWatch.error ? (
+          <span role="alert" className="mt-0.5 block text-fg-1">
+            {setWatch.error.message}
+          </span>
+        ) : (
+          <span className="mt-0.5 block text-fg-3">
+            Keeps counting while it's in front, even if you don't type, for up to 30 min. For AI
+            agents and renders.
+          </span>
+        )}
+      </p>
+      <Switch
+        label="Counts while I watch"
+        checked={app.watch}
+        onChange={(watch) => setWatch.mutate({ app, watch })}
+      />
+    </div>
   );
 }
 

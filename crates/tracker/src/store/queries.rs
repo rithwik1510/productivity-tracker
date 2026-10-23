@@ -172,24 +172,25 @@ impl Reader {
         Ok(sites)
     }
 
-    /// Every app row with a category, for `list_catalog` to merge with installed and running apps
-    /// by identity. `is_running` is always false here: the catalog knows what runs.
-    pub fn tracked_apps(&self) -> Result<Vec<CatalogApp>, StoreError> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT kind, key, name, category FROM app WHERE category IS NOT NULL ORDER BY name",
-        )?;
+    /// Every app row, tracked or not (`category: None`), for `list_catalog` to merge with installed
+    /// and running apps by identity: an untracked row still holds the app's watch setting.
+    /// `is_running` is always false here: the catalog knows what runs.
+    pub fn stored_apps(&self) -> Result<Vec<CatalogApp>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT kind, key, name, category, watch FROM app ORDER BY name")?;
         let apps = stmt
             .query_map([], |row| {
                 let kind: String = row.get(0)?;
                 let identity = identity_from_columns(&kind, row.get(1)?)?;
-                let SqlCategory(category) = row.get(3)?;
                 Ok(CatalogApp {
                     icon_path: existing_icon(&self.data_dir, &identity),
                     is_browser: is_browser(&identity),
                     identity,
                     name: row.get(2)?,
-                    category: Some(category),
+                    category: row.get::<_, Option<SqlCategory>>(3)?.map(|c| c.0),
                     is_running: false,
+                    watch: row.get(4)?,
                 })
             })?
             .collect::<Result<_, _>>()?;

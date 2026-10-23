@@ -37,14 +37,15 @@ export type Target = AppTarget | SiteTarget;
 const byName = (a: Base, b: Base) => a.name.localeCompare(b.name);
 
 /**
- * The searchable part of an App Identity: the exe name ("winword" for Word), or a packaged app's
- * name from its AUMID ("windowsterminal" from Microsoft.WindowsTerminal_8wekyb3d8bbwe!App). The
- * publisher and the hash are left out, so "micro" doesn't match every Store app.
+ * The searchable part of an App Identity: the exe name ("winword" for Word; "chrome helium" for a
+ * Chromium fork keyed chrome.exe|helium), or a packaged app's name from its AUMID
+ * ("windowsterminal" from Microsoft.WindowsTerminal_8wekyb3d8bbwe!App). The publisher and the
+ * hash are left out, so "micro" doesn't match every Store app.
  */
 function identityWords({ kind, key }: AppIdentity) {
   const lower = key.toLowerCase();
   return kind === "exe"
-    ? lower.replace(/\.exe$/, "")
+    ? lower.replace(/\.exe(\||$)/, " ").trim()
     : (lower.split("_")[0]?.split(".").at(-1) ?? "");
 }
 
